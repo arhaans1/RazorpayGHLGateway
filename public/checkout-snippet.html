@@ -21,6 +21,12 @@
     const page_url = window.location.href;
     
     try {
+      // Validate required fields
+      if (!name || !email || !phone) {
+        alert('Missing required information. Please ensure name, email, and phone are provided in the URL parameters.\n\nExample: ?name=John&email=john@example.com&phone=9876543210');
+        return;
+      }
+      
       // Call backend API to create Razorpay order
       const response = await fetch(`${API_BASE_URL}/api/create-order`, {
         method: 'POST',
@@ -35,12 +41,33 @@
         }),
       });
       
+      // Check if response is ok
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'unknown_error', detail: `HTTP ${response.status}: ${response.statusText}` }));
+        throw new Error(JSON.stringify(errorData));
+      }
+      
       const data = await response.json();
       
       // Check for errors
       if (!data.order_id) {
         console.error('Order creation failed:', data);
-        alert('Order creation failed. Please try again or contact support.');
+        
+        // Show detailed error message
+        let errorMessage = 'Order creation failed. ';
+        if (data.error) {
+          errorMessage += '\n\nError: ' + data.error;
+        }
+        if (data.detail) {
+          if (typeof data.detail === 'string') {
+            errorMessage += '\n\nDetails: ' + data.detail;
+          } else {
+            errorMessage += '\n\nDetails: ' + JSON.stringify(data.detail, null, 2);
+          }
+        }
+        errorMessage += '\n\nPlease check the browser console for more details.';
+        
+        alert(errorMessage);
         return;
       }
       
@@ -71,7 +98,24 @@
       
     } catch (error) {
       console.error('Error:', error);
-      alert('An error occurred. Please try again or contact support.');
+      let errorMessage = 'An error occurred. ';
+      try {
+        const errorData = JSON.parse(error.message);
+        if (errorData.error) {
+          errorMessage += '\n\nError: ' + errorData.error;
+        }
+        if (errorData.detail) {
+          if (typeof errorData.detail === 'string') {
+            errorMessage += '\n\nDetails: ' + errorData.detail;
+          } else {
+            errorMessage += '\n\nDetails: ' + JSON.stringify(errorData.detail, null, 2);
+          }
+        }
+      } catch (e) {
+        errorMessage += '\n\n' + error.message;
+      }
+      errorMessage += '\n\nPlease check the browser console (F12) for more details.';
+      alert(errorMessage);
     }
   })();
 </script>
