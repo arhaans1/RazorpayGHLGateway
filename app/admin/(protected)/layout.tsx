@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import AdminNav from './components/AdminNav';
+import AdminNav from '../components/AdminNav';
 
 // Simple password-based authentication
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
