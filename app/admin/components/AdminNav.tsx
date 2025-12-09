@@ -46,6 +46,12 @@ export default function AdminNav() {
         Funnel Routes
       </Link>
       <Link
+        href="/admin/checkout-code"
+        style={pathname === '/admin/checkout-code' ? activeLinkStyle : linkStyle}
+      >
+        Checkout Code
+      </Link>
+      <Link
         href="/api/admin/logout"
         style={{ ...linkStyle, float: 'right' }}
       >
