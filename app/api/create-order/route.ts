@@ -52,19 +52,43 @@ export async function POST(request: NextRequest) {
     const hostname = parsedUrl.hostname;
     const pathname = parsedUrl.pathname;
 
-    // Look up funnel route
-    const { data: route, error: routeError } = await supabase
+    // Normalize pathname (remove trailing slash for matching)
+    const normalizedPathname = pathname.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
+    
+    // Look up funnel route - try exact match first, then try with/without trailing slash
+    let { data: route, error: routeError } = await supabase
       .from('funnel_routes')
       .select('client_id, price_id')
       .eq('hostname', hostname)
-      .eq('path_prefix', pathname)
+      .eq('path_prefix', normalizedPathname)
       .eq('is_active', true)
       .single();
 
+    // If not found, try with trailing slash
+    if (routeError || !route) {
+      const altPathname = normalizedPathname === '/' ? '/' : normalizedPathname + '/';
+      const { data: altRoute, error: altRouteError } = await supabase
+        .from('funnel_routes')
+        .select('client_id, price_id')
+        .eq('hostname', hostname)
+        .eq('path_prefix', altPathname)
+        .eq('is_active', true)
+        .single();
+      
+      if (!altRouteError && altRoute) {
+        route = altRoute;
+        routeError = null;
+      }
+    }
+
     if (routeError || !route) {
       console.error('Route lookup error:', routeError);
+      console.error('Looking for:', { hostname, pathname, normalizedPathname });
       return NextResponse.json(
-        { error: 'route_not_found', detail: `No active route found for ${hostname}${pathname}` },
+        { 
+          error: 'route_not_found', 
+          detail: `No active route found for ${hostname}${pathname}. Please check that a funnel route is configured with hostname="${hostname}" and path_prefix="${normalizedPathname}" (or "${normalizedPathname}/") and is_active=true.` 
+        },
         { status: 404, headers: corsHeaders }
       );
     }
@@ -133,10 +157,12 @@ export async function POST(request: NextRequest) {
 
     if (!razorpayResponse.ok || !razorpayData.id) {
       console.error('Razorpay API error:', razorpayData);
+      const errorDetail = razorpayData.error?.description || razorpayData.error?.reason || JSON.stringify(razorpayData);
       return NextResponse.json(
         {
           error: 'order_create_failed',
-          detail: razorpayData,
+          detail: `Razorpay API error: ${errorDetail}. Status: ${razorpayResponse.status}`,
+          razorpay_response: razorpayData,
         },
         { status: razorpayResponse.status || 500, headers: corsHeaders }
       );
