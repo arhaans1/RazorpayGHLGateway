@@ -14,21 +14,51 @@
   
   If data is not found, the script will show a detailed error message with debugging info.
 -->
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
-  (async () => {
-    try {
+  // Immediately log that script tag was parsed
+  console.log('[Razorpay Checkout] Script tag parsed and executing');
+  
+  // Load Razorpay script asynchronously to not block page rendering
+  (function() {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = function() {
+      console.log('[Razorpay Checkout] Razorpay script loaded');
+      initCheckout();
+    };
+    script.onerror = function() {
+      console.error('[Razorpay Checkout] Failed to load Razorpay script');
+      // Still try to initialize in case Razorpay is already loaded
+      setTimeout(initCheckout, 1000);
+    };
+    document.head.appendChild(script);
+  })();
+  
+  function initCheckout() {
+    console.log('[Razorpay Checkout] initCheckout called');
+    (async () => {
+      console.log('[Razorpay Checkout] Async function started');
+      try {
+      console.log('[Razorpay Checkout] Current readyState:', document.readyState);
       // Wait for page to be fully loaded
       if (document.readyState === 'loading') {
+        console.log('[Razorpay Checkout] Waiting for page to load...');
         await new Promise(resolve => {
           if (document.readyState === 'complete') {
+            console.log('[Razorpay Checkout] Page already complete');
             resolve();
           } else {
             document.addEventListener('DOMContentLoaded', resolve);
             // Also wait a bit for dynamic content
-            setTimeout(resolve, 500);
+            setTimeout(() => {
+              console.log('[Razorpay Checkout] Timeout reached, proceeding');
+              resolve();
+            }, 500);
           }
         });
+      } else {
+        console.log('[Razorpay Checkout] Page already loaded, proceeding');
       }
       
       // Configuration: Replace with your Vercel deployment URL
@@ -220,9 +250,19 @@
       
       // Verify Razorpay is loaded
       if (typeof Razorpay === 'undefined') {
-        console.error('Razorpay script not loaded');
-        alert('Payment gateway script failed to load. Please refresh the page and try again.');
-        return;
+        console.error('[Razorpay Checkout] Razorpay script not loaded, waiting...');
+        // Wait a bit more for Razorpay to load
+        let retries = 0;
+        while (typeof Razorpay === 'undefined' && retries < 10) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          retries++;
+        }
+        if (typeof Razorpay === 'undefined') {
+          console.error('[Razorpay Checkout] Razorpay still not loaded after waiting');
+          alert('Payment gateway script failed to load. Please refresh the page and try again.');
+          return;
+        }
+        console.log('[Razorpay Checkout] Razorpay loaded after waiting');
       }
       
       // Verify we have all required data
@@ -286,12 +326,25 @@
       errorMessage += '\n\nPlease check the browser console (F12) for more details.';
       alert(errorMessage);
       }
-    } catch (outerError) {
-      // Catch any errors that occur during script initialization
-      console.error('Fatal error in checkout script:', outerError);
-      // Don't show alert for initialization errors to avoid breaking the page
-      // Just log to console
-    }
-  })();
+      } catch (outerError) {
+        // Catch any errors that occur during script initialization
+        console.error('[Razorpay Checkout] Fatal error in checkout script:', outerError);
+        console.error('[Razorpay Checkout] Error stack:', outerError.stack);
+        // Don't show alert for initialization errors to avoid breaking the page
+        // Just log to console
+      }
+    })().catch(err => {
+      console.error('[Razorpay Checkout] Unhandled promise rejection:', err);
+      console.error('[Razorpay Checkout] Error stack:', err.stack);
+    });
+  }
+  
+  // If Razorpay is already loaded, initialize immediately
+  if (typeof Razorpay !== 'undefined') {
+    console.log('[Razorpay Checkout] Razorpay already loaded, initializing immediately');
+    initCheckout();
+  }
+  
+  console.log('[Razorpay Checkout] Script initialization complete');
 </script>
 
