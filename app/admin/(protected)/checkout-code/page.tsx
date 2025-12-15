@@ -18,21 +18,51 @@ const checkoutSnippet = `<!--
   
   If data is not found, the script will show a detailed error message with debugging info.
 -->
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
-  (async () => {
-    try {
+  // Immediately log that script tag was parsed
+  console.log('[Razorpay Checkout] Script tag parsed and executing');
+  
+  // Load Razorpay script asynchronously to not block page rendering
+  (function() {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = function() {
+      console.log('[Razorpay Checkout] Razorpay script loaded');
+      initCheckout();
+    };
+    script.onerror = function() {
+      console.error('[Razorpay Checkout] Failed to load Razorpay script');
+      // Still try to initialize in case Razorpay is already loaded
+      setTimeout(initCheckout, 1000);
+    };
+    document.head.appendChild(script);
+  })();
+  
+  function initCheckout() {
+    console.log('[Razorpay Checkout] initCheckout called');
+    (async () => {
+      console.log('[Razorpay Checkout] Async function started');
+      try {
+      console.log('[Razorpay Checkout] Current readyState:', document.readyState);
       // Wait for page to be fully loaded
       if (document.readyState === 'loading') {
+        console.log('[Razorpay Checkout] Waiting for page to load...');
         await new Promise(resolve => {
           if (document.readyState === 'complete') {
+            console.log('[Razorpay Checkout] Page already complete');
             resolve();
           } else {
             document.addEventListener('DOMContentLoaded', resolve);
             // Also wait a bit for dynamic content
-            setTimeout(resolve, 500);
+            setTimeout(() => {
+              console.log('[Razorpay Checkout] Timeout reached, proceeding');
+              resolve();
+            }, 500);
           }
         });
+      } else {
+        console.log('[Razorpay Checkout] Page already loaded, proceeding');
       }
       
       // Configuration: Replace with your Vercel deployment URL
@@ -62,14 +92,33 @@ const checkoutSnippet = `<!--
         }
       }
     
-      // Try to get name from multiple sources
-      // Priority: Manual override > URL params > Form fields > JS variables > localStorage
-      const urlParams = new URLSearchParams(window.location.search);
-      const name = getValue([
-        window.razorpayCheckoutConfig?.name, // Manual override
-        urlParams.get('name'),
-        urlParams.get('fname'),
-        urlParams.get('first_name'),
+      // Get current page URL
+      const page_url = window.location.href;
+      
+      // Helper function to extract values (will be called multiple times)
+      function extractValues() {
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // Handle GHL format: first_name + last_name or combined name
+        let combinedName = '';
+        const firstName = urlParams.get('first_name') || urlParams.get('fname') || '';
+        const lastName = urlParams.get('last_name') || urlParams.get('lname') || '';
+        if (firstName && lastName) {
+          combinedName = \`\${firstName} \${lastName}\`.trim();
+        } else if (firstName) {
+          combinedName = firstName;
+        } else if (lastName) {
+          combinedName = lastName;
+        }
+        
+        const name = getValue([
+          window.razorpayCheckoutConfig?.name,
+          urlParams.get('name'),
+          urlParams.get('full_name'),
+          urlParams.get('fullname'),
+          combinedName, // Combined first_name + last_name from GHL
+          urlParams.get('fname'),
+          urlParams.get('first_name'),
         document.querySelector('input[name="name"]')?.value,
         document.querySelector('input[name="fname"]')?.value,
         document.querySelector('input[name="first_name"]')?.value,
@@ -86,9 +135,8 @@ const checkoutSnippet = `<!--
         safeGetStorage('customerName', sessionStorage)
       ]);
       
-      // Try to get email from multiple sources
       const email = getValue([
-        window.razorpayCheckoutConfig?.email, // Manual override
+        window.razorpayCheckoutConfig?.email,
         urlParams.get('email'),
         urlParams.get('e-mail'),
         document.querySelector('input[name="email"]')?.value,
@@ -105,9 +153,8 @@ const checkoutSnippet = `<!--
         safeGetStorage('customerEmail', sessionStorage)
       ]);
       
-      // Try to get phone from multiple sources
       const phone = getValue([
-        window.razorpayCheckoutConfig?.phone || window.razorpayCheckoutConfig?.contact, // Manual override
+        window.razorpayCheckoutConfig?.phone || window.razorpayCheckoutConfig?.contact,
         urlParams.get('phone'),
         urlParams.get('contact'),
         urlParams.get('mobile'),
@@ -134,44 +181,91 @@ const checkoutSnippet = `<!--
         safeGetStorage('customerPhone', localStorage),
         safeGetStorage('customerPhone', sessionStorage)
       ]);
+      
+      return { name, email, phone };
+    }
     
-      // Get current page URL
-      const page_url = window.location.href;
+    // Try to extract values with retries (GHL might load data dynamically)
+    let { name, email, phone } = extractValues();
+    let retries = 0;
+    const maxRetries = 10; // Try for up to 5 seconds (10 * 500ms)
+    
+    console.log('[Razorpay Checkout] Initial extracted values:', { name, email, phone, page_url });
+    
+    // Wait and retry if data is missing (GHL might populate forms dynamically)
+    while ((!name || !email || !phone) && retries < maxRetries) {
+      console.log(\`[Razorpay Checkout] Missing data, retry \${retries + 1}/\${maxRetries}...\`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const extracted = extractValues();
+      name = extracted.name;
+      email = extracted.email;
+      phone = extracted.phone;
+      retries++;
       
-      // Debug: Log what we found
-      console.log('Extracted values:', { name, email, phone, page_url });
-      
-      try {
-        // Validate required fields
-        const missingFields = [];
-        if (!name) missingFields.push('name');
-        if (!email) missingFields.push('email');
-        if (!phone) missingFields.push('phone/contact');
+      if (name && email && phone) {
+        console.log('[Razorpay Checkout] Data found after retry:', { name, email, phone });
+        break;
+      }
+    }
+    
+    // Final debug: Log what we found
+    console.log('[Razorpay Checkout] Final extracted values:', { name, email, phone, page_url });
+    
+    try {
+      // Validate required fields
+      const missingFields = [];
+      if (!name) missingFields.push('name');
+      if (!email) missingFields.push('email');
+      if (!phone) missingFields.push('phone/contact');
+    
+      if (missingFields.length > 0) {
+        // Get all inputs for debugging
+        const allInputs = Array.from(document.querySelectorAll('input, textarea, select'));
+        const formFields = allInputs.map(input => ({
+          name: input.name,
+          id: input.id,
+          type: input.type,
+          className: input.className,
+          value: input.value ? (input.type === 'password' ? '***' : input.value.substring(0, 20)) : '(empty)'
+        }));
         
-        if (missingFields.length > 0) {
-          const errorMsg = \`Missing required information: \${missingFields.join(', ')}\\n\\n\` +
-            \`The script tried to find these values from:\\n\` +
-            \`- URL parameters (e.g., ?name=John&email=john@example.com&phone=1234567890)\\n\` +
-            \`- Form fields with common names (name, email, phone, contact, etc.)\\n\` +
-            \`- JavaScript variables (window.name, window.email, window.phone)\\n\\n\` +
-            \`Please ensure the customer information is available in one of these formats.\\n\\n\` +
-            \`Current URL: \${page_url}\\n\` +
-            \`Found values: name="\${name}", email="\${email}", phone="\${phone}"\`;
-          
-          console.error('Missing fields:', missingFields);
-          console.error('Available form fields:', Array.from(document.querySelectorAll('input')).map(input => ({
-            name: input.name,
-            id: input.id,
-            type: input.type,
-            value: input.value ? '***' : '(empty)'
-          })));
-          
-          alert(errorMsg);
-          return;
-        }
+        // Check for GHL-specific data
+        const ghlData = {
+          windowKeys: Object.keys(window).filter(k => 
+            k.toLowerCase().includes('customer') || 
+            k.toLowerCase().includes('lead') || 
+            k.toLowerCase().includes('contact') ||
+            k.toLowerCase().includes('email') ||
+            k.toLowerCase().includes('phone')
+          ),
+          dataAttributes: Array.from(document.querySelectorAll('[data-*]')).slice(0, 10).map(el => ({
+            tag: el.tagName,
+            attributes: Array.from(el.attributes).filter(attr => attr.name.startsWith('data-')).map(attr => attr.name)
+          }))
+        };
         
-        console.log('Creating order with:', { page_url, name, email, contact: phone });
-        console.log('API URL:', \`\${API_BASE_URL}/api/create-order\`);
+        console.error('[Razorpay Checkout] Missing fields:', missingFields);
+        console.error('[Razorpay Checkout] Available form fields:', formFields);
+        console.error('[Razorpay Checkout] GHL data check:', ghlData);
+        
+        const errorMsg = \`Missing required information: \${missingFields.join(', ')}\\n\\n\` +
+          \`The script tried to find these values from multiple sources but couldn't find them.\\n\\n\` +
+          \`SOLUTIONS:\\n\` +
+          \`1. Add URL parameters: \${page_url}?name=John&email=john@example.com&phone=1234567890\\n\` +
+          \`2. Set JavaScript variables before this script:\\n\` +
+          \`   window.razorpayCheckoutConfig = { name: 'John', email: 'john@example.com', phone: '1234567890' };\\n\` +
+          \`3. Ensure form fields exist with names: name, email, phone, contact\\n\\n\` +
+          \`Current URL: \${page_url}\\n\` +
+          \`Found values: name="\${name}", email="\${email}", phone="\${phone}"\\n\` +
+          \`Form fields found: \${formFields.length}\\n\` +
+          \`Check browser console (F12) for detailed debugging info.\`;
+        
+        alert(errorMsg);
+        return;
+      }
+        
+      console.log('[Razorpay Checkout] Creating order with:', { page_url, name, email, contact: phone });
+      console.log('[Razorpay Checkout] API URL:', \`\${API_BASE_URL}/api/create-order\`);
         
         // Call backend API to create Razorpay order
         const response = await fetch(\`\${API_BASE_URL}/api/create-order\`, {
@@ -224,9 +318,19 @@ const checkoutSnippet = `<!--
         
         // Verify Razorpay is loaded
         if (typeof Razorpay === 'undefined') {
-          console.error('Razorpay script not loaded');
-          alert('Payment gateway script failed to load. Please refresh the page and try again.');
-          return;
+          console.error('[Razorpay Checkout] Razorpay script not loaded, waiting...');
+          // Wait a bit more for Razorpay to load
+          let retries = 0;
+          while (typeof Razorpay === 'undefined' && retries < 10) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            retries++;
+          }
+          if (typeof Razorpay === 'undefined') {
+            console.error('[Razorpay Checkout] Razorpay still not loaded after waiting');
+            alert('Payment gateway script failed to load. Please refresh the page and try again.');
+            return;
+          }
+          console.log('[Razorpay Checkout] Razorpay loaded after waiting');
         }
         
         // Verify we have all required data
@@ -244,10 +348,10 @@ const checkoutSnippet = `<!--
           description: data.product_name,
           prefill: data.prefill,
           handler: function (response) {
-            console.log('Payment successful:', response);
-            // Redirect to thank you page on successful payment
-            window.location.href = data.thank_you_url;
-          },
+          console.log('[Razorpay Checkout] Payment successful:', response);
+          // Redirect to thank you page on successful payment
+          window.location.href = data.thank_you_url;
+        },
           modal: {
             ondismiss: function() {
               // Optional: handle modal close
@@ -256,47 +360,60 @@ const checkoutSnippet = `<!--
           }
         };
         
-        console.log('Opening Razorpay checkout with options:', { ...options, key: '***' });
-        
-        // Small delay to avoid blank page issues, then open Razorpay checkout
-        setTimeout(() => {
-          try {
-            const razorpay = new Razorpay(options);
-            razorpay.open();
-          } catch (error) {
-            console.error('Error opening Razorpay:', error);
-            alert('Failed to open payment gateway. Error: ' + error.message);
-          }
-        }, 700);
-        
-      } catch (error) {
-        console.error('Error:', error);
-        let errorMessage = 'An error occurred. ';
+      console.log('[Razorpay Checkout] Opening Razorpay checkout with options:', { ...options, key: '***' });
+      
+      // Small delay to avoid blank page issues, then open Razorpay checkout
+      setTimeout(() => {
         try {
-          const errorData = JSON.parse(error.message);
-          if (errorData.error) {
-            errorMessage += '\\n\\nError: ' + errorData.error;
-          }
-          if (errorData.detail) {
-            if (typeof errorData.detail === 'string') {
-              errorMessage += '\\n\\nDetails: ' + errorData.detail;
-            } else {
-              errorMessage += '\\n\\nDetails: ' + JSON.stringify(errorData.detail, null, 2);
-            }
-          }
-        } catch (e) {
-          errorMessage += '\\n\\n' + error.message;
+          const razorpay = new Razorpay(options);
+          razorpay.open();
+        } catch (error) {
+          console.error('[Razorpay Checkout] Error opening Razorpay:', error);
+          alert('Failed to open payment gateway. Error: ' + error.message);
         }
-        errorMessage += '\\n\\nPlease check the browser console (F12) for more details.';
-        alert(errorMessage);
+      }, 700);
+      
+    } catch (error) {
+      console.error('[Razorpay Checkout] Error:', error);
+      let errorMessage = 'An error occurred. ';
+      try {
+        const errorData = JSON.parse(error.message);
+        if (errorData.error) {
+          errorMessage += '\\n\\nError: ' + errorData.error;
+        }
+        if (errorData.detail) {
+          if (typeof errorData.detail === 'string') {
+            errorMessage += '\\n\\nDetails: ' + errorData.detail;
+          } else {
+            errorMessage += '\\n\\nDetails: ' + JSON.stringify(errorData.detail, null, 2);
+          }
+        }
+      } catch (e) {
+        errorMessage += '\\n\\n' + error.message;
       }
-    } catch (outerError) {
-      // Catch any errors that occur during script initialization
-      console.error('Fatal error in checkout script:', outerError);
-      // Don't show alert for initialization errors to avoid breaking the page
-      // Just log to console
+      errorMessage += '\\n\\nPlease check the browser console (F12) for more details.';
+      alert(errorMessage);
     }
-  })();
+      } catch (outerError) {
+        // Catch any errors that occur during script initialization
+        console.error('[Razorpay Checkout] Fatal error in checkout script:', outerError);
+        console.error('[Razorpay Checkout] Error stack:', outerError.stack);
+        // Don't show alert for initialization errors to avoid breaking the page
+        // Just log to console
+      }
+    })().catch(err => {
+      console.error('[Razorpay Checkout] Unhandled promise rejection:', err);
+      console.error('[Razorpay Checkout] Error stack:', err.stack);
+    });
+  }
+  
+  // If Razorpay is already loaded, initialize immediately
+  if (typeof Razorpay !== 'undefined') {
+    console.log('[Razorpay Checkout] Razorpay already loaded, initializing immediately');
+    initCheckout();
+  }
+  
+  console.log('[Razorpay Checkout] Script initialization complete');
 </script>`;
 
 export default function CheckoutCodePage() {

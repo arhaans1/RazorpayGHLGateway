@@ -52,6 +52,12 @@ export default function AdminNav() {
         Checkout Code
       </Link>
       <Link
+        href="/admin/form-redirect-urls"
+        style={pathname === '/admin/form-redirect-urls' ? activeLinkStyle : linkStyle}
+      >
+        Form Redirect URLs
+      </Link>
+      <Link
         href="/api/admin/logout"
         style={{ ...linkStyle, float: 'right' }}
       >
