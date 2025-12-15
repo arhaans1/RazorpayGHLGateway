@@ -17,115 +17,129 @@
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
   (async () => {
-    // Wait for page to be fully loaded
-    if (document.readyState === 'loading') {
-      await new Promise(resolve => {
-        if (document.readyState === 'complete') {
-          resolve();
-        } else {
-          document.addEventListener('DOMContentLoaded', resolve);
-          // Also wait a bit for dynamic content
-          setTimeout(resolve, 500);
+    try {
+      // Wait for page to be fully loaded
+      if (document.readyState === 'loading') {
+        await new Promise(resolve => {
+          if (document.readyState === 'complete') {
+            resolve();
+          } else {
+            document.addEventListener('DOMContentLoaded', resolve);
+            // Also wait a bit for dynamic content
+            setTimeout(resolve, 500);
+          }
+        });
+      }
+      
+      // Configuration: Replace with your Vercel deployment URL
+      const API_BASE_URL = 'https://razorpay-ghl-gateway.vercel.app'; // e.g., 'https://your-app.vercel.app'
+      
+      // Helper function to safely get value from multiple sources
+      function getValue(sources) {
+        for (const source of sources) {
+          try {
+            if (source && typeof source === 'string' && source.trim()) {
+              return source.trim();
+            }
+          } catch (e) {
+            // Skip this source if it causes an error
+            continue;
+          }
         }
-      });
-    }
-    
-    // Configuration: Replace with your Vercel deployment URL
-    const API_BASE_URL = 'https://razorpay-ghl-gateway.vercel.app'; // e.g., 'https://your-app.vercel.app'
-    
-    // Helper function to get value from multiple sources
-    function getValue(sources) {
-      for (const source of sources) {
-        if (source && source.trim()) {
-          return source.trim();
+        return '';
+      }
+      
+      // Helper to safely access localStorage
+      function safeGetStorage(key, storage) {
+        try {
+          return storage.getItem(key);
+        } catch (e) {
+          return null;
         }
       }
-      return '';
-    }
     
-    // Try to get name from multiple sources
-    // Priority: Manual override > URL params > Form fields > JS variables > localStorage
-    const urlParams = new URLSearchParams(window.location.search);
-    const name = getValue([
-      window.razorpayCheckoutConfig?.name, // Manual override
-      urlParams.get('name'),
-      urlParams.get('fname'),
-      urlParams.get('first_name'),
-      document.querySelector('input[name="name"]')?.value,
-      document.querySelector('input[name="fname"]')?.value,
-      document.querySelector('input[name="first_name"]')?.value,
-      document.querySelector('input[name="firstName"]')?.value,
-      document.querySelector('#name')?.value,
-      document.querySelector('#fname')?.value,
-      document.querySelector('[data-name]')?.getAttribute('data-name'),
-      document.querySelector('[data-field="name"]')?.value,
-      window.name,
-      window.customerName,
-      window.firstName,
-      window.customer?.name,
-      window.customer?.firstName,
-      localStorage.getItem('customerName'),
-      sessionStorage.getItem('customerName')
-    ]);
+      // Try to get name from multiple sources
+      // Priority: Manual override > URL params > Form fields > JS variables > localStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      const name = getValue([
+        window.razorpayCheckoutConfig?.name, // Manual override
+        urlParams.get('name'),
+        urlParams.get('fname'),
+        urlParams.get('first_name'),
+        document.querySelector('input[name="name"]')?.value,
+        document.querySelector('input[name="fname"]')?.value,
+        document.querySelector('input[name="first_name"]')?.value,
+        document.querySelector('input[name="firstName"]')?.value,
+        document.querySelector('#name')?.value,
+        document.querySelector('#fname')?.value,
+        document.querySelector('[data-name]')?.getAttribute('data-name'),
+        document.querySelector('[data-field="name"]')?.value,
+        window.customerName,
+        window.firstName,
+        window.customer?.name,
+        window.customer?.firstName,
+        safeGetStorage('customerName', localStorage),
+        safeGetStorage('customerName', sessionStorage)
+      ]);
+      
+      // Try to get email from multiple sources
+      const email = getValue([
+        window.razorpayCheckoutConfig?.email, // Manual override
+        urlParams.get('email'),
+        urlParams.get('e-mail'),
+        document.querySelector('input[name="email"]')?.value,
+        document.querySelector('input[name="e-mail"]')?.value,
+        document.querySelector('input[type="email"]')?.value,
+        document.querySelector('#email')?.value,
+        document.querySelector('[data-email]')?.getAttribute('data-email'),
+        document.querySelector('[data-field="email"]')?.value,
+        window.email,
+        window.customerEmail,
+        window.userEmail,
+        window.customer?.email,
+        safeGetStorage('customerEmail', localStorage),
+        safeGetStorage('customerEmail', sessionStorage)
+      ]);
+      
+      // Try to get phone from multiple sources
+      const phone = getValue([
+        window.razorpayCheckoutConfig?.phone || window.razorpayCheckoutConfig?.contact, // Manual override
+        urlParams.get('phone'),
+        urlParams.get('contact'),
+        urlParams.get('mobile'),
+        urlParams.get('tel'),
+        urlParams.get('phoneNumber'),
+        document.querySelector('input[name="phone"]')?.value,
+        document.querySelector('input[name="contact"]')?.value,
+        document.querySelector('input[name="mobile"]')?.value,
+        document.querySelector('input[name="tel"]')?.value,
+        document.querySelector('input[name="phoneNumber"]')?.value,
+        document.querySelector('input[type="tel"]')?.value,
+        document.querySelector('#phone')?.value,
+        document.querySelector('#contact')?.value,
+        document.querySelector('#mobile')?.value,
+        document.querySelector('[data-phone]')?.getAttribute('data-phone'),
+        document.querySelector('[data-contact]')?.getAttribute('data-contact'),
+        document.querySelector('[data-field="phone"]')?.value,
+        window.phone,
+        window.contact,
+        window.mobile,
+        window.customerPhone,
+        window.customer?.phone,
+        window.customer?.contact,
+        safeGetStorage('customerPhone', localStorage),
+        safeGetStorage('customerPhone', sessionStorage)
+      ]);
     
-    // Try to get email from multiple sources
-    const email = getValue([
-      window.razorpayCheckoutConfig?.email, // Manual override
-      urlParams.get('email'),
-      urlParams.get('e-mail'),
-      document.querySelector('input[name="email"]')?.value,
-      document.querySelector('input[name="e-mail"]')?.value,
-      document.querySelector('input[type="email"]')?.value,
-      document.querySelector('#email')?.value,
-      document.querySelector('[data-email]')?.getAttribute('data-email'),
-      document.querySelector('[data-field="email"]')?.value,
-      window.email,
-      window.customerEmail,
-      window.userEmail,
-      window.customer?.email,
-      localStorage.getItem('customerEmail'),
-      sessionStorage.getItem('customerEmail')
-    ]);
-    
-    // Try to get phone from multiple sources
-    const phone = getValue([
-      window.razorpayCheckoutConfig?.phone || window.razorpayCheckoutConfig?.contact, // Manual override
-      urlParams.get('phone'),
-      urlParams.get('contact'),
-      urlParams.get('mobile'),
-      urlParams.get('tel'),
-      urlParams.get('phoneNumber'),
-      document.querySelector('input[name="phone"]')?.value,
-      document.querySelector('input[name="contact"]')?.value,
-      document.querySelector('input[name="mobile"]')?.value,
-      document.querySelector('input[name="tel"]')?.value,
-      document.querySelector('input[name="phoneNumber"]')?.value,
-      document.querySelector('input[type="tel"]')?.value,
-      document.querySelector('#phone')?.value,
-      document.querySelector('#contact')?.value,
-      document.querySelector('#mobile')?.value,
-      document.querySelector('[data-phone]')?.getAttribute('data-phone'),
-      document.querySelector('[data-contact]')?.getAttribute('data-contact'),
-      document.querySelector('[data-field="phone"]')?.value,
-      window.phone,
-      window.contact,
-      window.mobile,
-      window.customerPhone,
-      window.customer?.phone,
-      window.customer?.contact,
-      localStorage.getItem('customerPhone'),
-      sessionStorage.getItem('customerPhone')
-    ]);
-    
-    // Get current page URL
-    const page_url = window.location.href;
-    
-    // Debug: Log what we found
-    console.log('Extracted values:', { name, email, phone, page_url });
-    
-    try {
-      // Validate required fields
-      const missingFields = [];
+      // Get current page URL
+      const page_url = window.location.href;
+      
+      // Debug: Log what we found
+      console.log('Extracted values:', { name, email, phone, page_url });
+      
+      try {
+        // Validate required fields
+        const missingFields = [];
       if (!name) missingFields.push('name');
       if (!email) missingFields.push('email');
       if (!phone) missingFields.push('phone/contact');
@@ -271,6 +285,12 @@
       }
       errorMessage += '\n\nPlease check the browser console (F12) for more details.';
       alert(errorMessage);
+      }
+    } catch (outerError) {
+      // Catch any errors that occur during script initialization
+      console.error('Fatal error in checkout script:', outerError);
+      // Don't show alert for initialization errors to avoid breaking the page
+      // Just log to console
     }
   })();
 </script>
