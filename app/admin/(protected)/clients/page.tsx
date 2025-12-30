@@ -81,7 +81,15 @@ export default function ClientsPage() {
 
       setShowForm(false);
       setEditingClient(null);
-      setFormData({ id: '', name: '', razorpay_key_id: '', razorpay_key_secret: '' });
+      setFormData({ 
+        id: '', 
+        name: '', 
+        razorpay_key_id: '', 
+        razorpay_key_secret: '',
+        cashfree_app_id: '',
+        cashfree_secret_key: '',
+        cashfree_env: 'production',
+      });
       fetchClients();
     } catch (error: any) {
       console.error('Error saving client:', error);
