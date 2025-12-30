@@ -369,7 +369,9 @@
                 k.toLowerCase().includes('email') ||
                 k.toLowerCase().includes('phone')
               ),
-              dataAttributes: Array.from(document.querySelectorAll('[data-*]')).slice(0, 10).map(el => ({
+              dataAttributes: Array.from(document.querySelectorAll('*')).filter(el =>
+                Array.from(el.attributes).some(attr => attr.name.startsWith('data-'))
+              ).slice(0, 10).map(el => ({
                 tag: el.tagName,
                 attributes: Array.from(el.attributes).filter(attr => attr.name.startsWith('data-')).map(attr => attr.name)
               }))
