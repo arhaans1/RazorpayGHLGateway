@@ -37,12 +37,16 @@ export class CashfreeProvider implements PaymentProvider {
     // Generate unique order ID
     const orderId = `cf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+    // Generate customer ID from email (required by Cashfree API)
+    const customerId = customer.email.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+
     // Prepare Cashfree order creation request
     const requestBody = {
       order_id: orderId,
       order_amount: orderAmount,
       order_currency: price.currency.toUpperCase(),
       customer_details: {
+        customer_id: customerId,
         customer_name: customer.name,
         customer_email: customer.email,
         customer_phone: customer.contact.replace(/\D/g, ''), // Remove non-digits
