@@ -198,6 +198,7 @@ export default function FunnelRoutesPage() {
               path_prefix: '',
               client_id: '',
               price_id: '',
+              gateway: 'razorpay',
               is_active: true,
             });
             setFilteredPrices([]);
