@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getPaymentProvider, PaymentProviderError, PaymentGateway } from '@/lib/payment-providers';
 
 // Initialize Supabase client with service role key (server-side only)
 const supabaseUrl = process.env.SUPABASE_URL!;
@@ -56,9 +57,10 @@ export async function POST(request: NextRequest) {
     const normalizedPathname = pathname.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
     
     // Look up funnel route - try exact match first, then try with/without trailing slash
+    // Select gateway column to determine which payment provider to use
     let { data: route, error: routeError } = await supabase
       .from('funnel_routes')
-      .select('client_id, price_id')
+      .select('client_id, price_id, gateway')
       .eq('hostname', hostname)
       .eq('path_prefix', normalizedPathname)
       .eq('is_active', true)
@@ -69,7 +71,7 @@ export async function POST(request: NextRequest) {
       const altPathname = normalizedPathname === '/' ? '/' : normalizedPathname + '/';
       const { data: altRoute, error: altRouteError } = await supabase
         .from('funnel_routes')
-        .select('client_id, price_id')
+        .select('client_id, price_id, gateway')
         .eq('hostname', hostname)
         .eq('path_prefix', altPathname)
         .eq('is_active', true)
@@ -93,10 +95,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch client (Razorpay credentials)
+    // Determine gateway (default to 'razorpay' for backward compatibility)
+    const gateway: PaymentGateway = (route.gateway as PaymentGateway) || 'razorpay';
+
+    // Fetch client credentials (both Razorpay and Cashfree)
     const { data: client, error: clientError } = await supabase
       .from('clients')
-      .select('id, razorpay_key_id, razorpay_key_secret')
+      .select('id, razorpay_key_id, razorpay_key_secret, cashfree_app_id, cashfree_secret_key, cashfree_env')
       .eq('id', route.client_id)
       .single();
 
@@ -123,66 +128,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Prepare Razorpay order creation request
-    const razorpayAuth = Buffer.from(
-      `${client.razorpay_key_id}:${client.razorpay_key_secret}`
-    ).toString('base64');
+    // Get the appropriate payment provider
+    const paymentProvider = getPaymentProvider(gateway);
 
-    const receiptId = `rcpt_${Date.now()}`;
-    const contactDigits = contact.replace(/\D/g, ''); // Remove non-digits
+    // Create order using the provider
+    try {
+      const orderResponse = await paymentProvider.createOrder({
+        client,
+        price,
+        customer: {
+          name,
+          email,
+          contact,
+        },
+      });
 
-    // Form-encoded body for Razorpay API
-    const formData = new URLSearchParams({
-      amount: price.amount_paise.toString(),
-      currency: price.currency.toUpperCase(),
-      receipt: receiptId,
-      payment_capture: '1',
-      'notes[name]': name,
-      'notes[email]': email,
-      'notes[contact]': contactDigits,
-      'notes[product_name]': price.product_name,
-    });
-
-    // Call Razorpay Orders API
-    const razorpayResponse = await fetch('https://api.razorpay.com/v1/orders', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${razorpayAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData.toString(),
-    });
-
-    const razorpayData = await razorpayResponse.json();
-
-    if (!razorpayResponse.ok || !razorpayData.id) {
-      console.error('Razorpay API error:', razorpayData);
-      const errorDetail = razorpayData.error?.description || razorpayData.error?.reason || JSON.stringify(razorpayData);
+      // Return standardized response
       return NextResponse.json(
         {
-          error: 'order_create_failed',
-          detail: `Razorpay API error: ${errorDetail}. Status: ${razorpayResponse.status}`,
-          razorpay_response: razorpayData,
+          gateway: orderResponse.gateway,
+          order_id: orderResponse.order_id,
+          checkout_data: orderResponse.checkout_data,
+          product_name: orderResponse.product_name,
+          thank_you_url: orderResponse.thank_you_url,
+          prefill: orderResponse.prefill,
         },
-        { status: razorpayResponse.status || 500, headers: corsHeaders }
+        { headers: corsHeaders }
       );
+    } catch (error: any) {
+      // Handle payment provider errors
+      if (error instanceof PaymentProviderError) {
+        console.error(`${error.gateway} API error:`, error.details);
+        return NextResponse.json(
+          {
+            error: 'order_create_failed',
+            detail: error.message,
+            gateway: error.gateway,
+            gateway_response: error.details,
+          },
+          { status: error.status || 500, headers: corsHeaders }
+        );
+      }
+      // Re-throw to be caught by outer catch block
+      throw error;
     }
-
-    // Success: return order details
-    return NextResponse.json(
-      {
-        order_id: razorpayData.id,
-        key_id: client.razorpay_key_id,
-        product_name: price.product_name,
-        thank_you_url: price.thank_you_url,
-        prefill: {
-          name: name,
-          email: email,
-          contact: contact,
-        },
-      },
-      { headers: corsHeaders }
-    );
   } catch (error: any) {
     console.error('Unexpected error:', error);
     return NextResponse.json(

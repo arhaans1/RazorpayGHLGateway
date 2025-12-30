@@ -14,6 +14,7 @@ interface FunnelRoute {
   path_prefix: string;
   client_id: string;
   price_id: string;
+  gateway: 'razorpay' | 'cashfree';
   is_active: boolean;
   created_at: string;
 }
@@ -42,6 +43,7 @@ export default function FunnelRoutesPage() {
     path_prefix: '',
     client_id: '',
     price_id: '',
+    gateway: 'razorpay' as 'razorpay' | 'cashfree',
     is_active: true,
   });
 
@@ -92,7 +94,7 @@ export default function FunnelRoutesPage() {
     try {
       const { data, error } = await supabase
         .from('funnel_routes')
-        .select('*')
+        .select('id, hostname, path_prefix, client_id, price_id, gateway, is_active, created_at')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -127,6 +129,7 @@ export default function FunnelRoutesPage() {
         path_prefix: '',
         client_id: '',
         price_id: '',
+        gateway: 'razorpay',
         is_active: true,
       });
       setFilteredPrices([]);
@@ -144,6 +147,7 @@ export default function FunnelRoutesPage() {
       path_prefix: route.path_prefix,
       client_id: route.client_id,
       price_id: route.price_id,
+      gateway: route.gateway || 'razorpay',
       is_active: route.is_active,
     });
     setShowForm(true);
@@ -313,6 +317,28 @@ export default function FunnelRoutesPage() {
             </select>
           </div>
           <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+              Payment Gateway
+            </label>
+            <select
+              value={formData.gateway}
+              onChange={(e) => setFormData({ ...formData, gateway: e.target.value as 'razorpay' | 'cashfree' })}
+              required
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+              }}
+            >
+              <option value="razorpay">Razorpay</option>
+              <option value="cashfree">Cashfree</option>
+            </select>
+            <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+              Note: Ensure the selected client has credentials configured for the chosen gateway.
+            </p>
+          </div>
+          <div style={{ marginBottom: '15px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <input
                 type="checkbox"
@@ -353,6 +379,7 @@ export default function FunnelRoutesPage() {
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Path</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Client</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Price</th>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Gateway</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Status</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Created</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Actions</th>
@@ -363,8 +390,27 @@ export default function FunnelRoutesPage() {
               <tr key={route.id}>
                 <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.hostname}</td>
                 <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.path_prefix}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.client_id}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.price_id}</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
+                  {clients.find((c) => c.id === route.client_id)?.name || route.client_id}
+                </td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
+                  {prices.find((p) => p.id === route.price_id)?.product_name || route.price_id}
+                </td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
+                  <span
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      backgroundColor: (route.gateway || 'razorpay') === 'cashfree' ? '#e7f3ff' : '#fff4e6',
+                      color: (route.gateway || 'razorpay') === 'cashfree' ? '#0066cc' : '#cc6600',
+                      fontWeight: 'bold',
+                      textTransform: 'uppercase',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {route.gateway || 'razorpay'}
+                  </span>
+                </td>
                 <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
                   <span
                     style={{

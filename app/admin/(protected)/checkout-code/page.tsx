@@ -468,12 +468,12 @@ export default function CheckoutCodePage() {
         }}
       >
         <div style={{ marginBottom: '15px' }}>
-          <h2 style={{ marginBottom: '10px' }}>Universal Razorpay Checkout Snippet</h2>
+          <h2 style={{ marginBottom: '10px' }}>Universal Payment Gateway Checkout Snippet</h2>
           <p style={{ color: '#666', marginBottom: '10px' }}>
             Copy this code and paste it into your GoHighLevel or Landing Page checkout page.
           </p>
           <p style={{ color: '#666', fontSize: '14px' }}>
-            <strong>Note:</strong> The code is already configured with your Vercel URL. Just copy and paste!
+            <strong>Note:</strong> The code supports both Razorpay and Cashfree payment gateways. The gateway is automatically selected based on your funnel route configuration. The code is already configured with your Vercel URL. Just copy and paste!
           </p>
         </div>
 

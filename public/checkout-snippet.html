@@ -1,5 +1,6 @@
 <!--
-  Universal Razorpay Checkout Snippet
+  Universal Payment Gateway Checkout Snippet
+  Supports: Razorpay and Cashfree
   Paste this into your GoHighLevel or Landing Page checkout page
   
   IMPORTANT: Replace YOUR_VERCEL_URL with your actual Vercel deployment URL
@@ -16,27 +17,13 @@
 -->
 <script>
   // Immediately log that script tag was parsed
-  console.log('[Razorpay Checkout] Script tag parsed and executing');
+  console.log('[Payment Gateway Checkout] Script tag parsed and executing');
   
-  // Load Razorpay script asynchronously to not block page rendering
-  (function() {
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.async = true;
-    script.onload = function() {
-      console.log('[Razorpay Checkout] Razorpay script loaded');
-      initCheckout();
-    };
-    script.onerror = function() {
-      console.error('[Razorpay Checkout] Failed to load Razorpay script');
-      // Still try to initialize in case Razorpay is already loaded
-      setTimeout(initCheckout, 1000);
-    };
-    document.head.appendChild(script);
-  })();
+  // Payment gateway scripts will be loaded dynamically based on API response
+  // No need to pre-load any specific gateway script
   
   function initCheckout() {
-    console.log('[Razorpay Checkout] initCheckout called');
+    console.log('[Payment Gateway Checkout] initCheckout called');
     (async () => {
       console.log('[Razorpay Checkout] Async function started');
       try {
@@ -205,7 +192,7 @@
       }
       
       // Final debug: Log what we found
-      console.log('[Razorpay Checkout] Final extracted values:', { name, email, phone, page_url });
+      console.log('[Payment Gateway Checkout] Final extracted values:', { name, email, phone, page_url });
       
       try {
         // Validate required fields
@@ -240,9 +227,9 @@
             }))
           };
           
-          console.error('[Razorpay Checkout] Missing fields:', missingFields);
-          console.error('[Razorpay Checkout] Available form fields:', formFields);
-          console.error('[Razorpay Checkout] GHL data check:', ghlData);
+          console.error('[Payment Gateway Checkout] Missing fields:', missingFields);
+          console.error('[Payment Gateway Checkout] Available form fields:', formFields);
+          console.error('[Payment Gateway Checkout] GHL data check:', ghlData);
           
           const errorMsg = `Missing required information: ${missingFields.join(', ')}\n\n` +
             `The script tried to find these values from multiple sources but couldn't find them.\n\n` +
@@ -289,7 +276,7 @@
       
       // Check for errors
       if (!data.order_id) {
-        console.error('Order creation failed - Response data:', data);
+        console.error('[Payment Gateway Checkout] Order creation failed - Response data:', data);
         
         // Show detailed error message
         let errorMessage = 'Order creation failed.\n\n';
@@ -303,8 +290,8 @@
             errorMessage += '\nDetails: ' + JSON.stringify(data.detail, null, 2);
           }
         }
-        if (data.razorpay_response) {
-          errorMessage += '\n\nRazorpay Response: ' + JSON.stringify(data.razorpay_response, null, 2);
+        if (data.gateway_response) {
+          errorMessage += '\n\n' + (data.gateway || 'Gateway') + ' Response: ' + JSON.stringify(data.gateway_response, null, 2);
         }
         errorMessage += '\n\nPlease check the browser console (F12) for more details.';
         
@@ -312,62 +299,26 @@
         return;
       }
       
-      // Verify Razorpay is loaded
-      if (typeof Razorpay === 'undefined') {
-        console.error('[Razorpay Checkout] Razorpay script not loaded, waiting...');
-        // Wait a bit more for Razorpay to load
-        let retries = 0;
-        while (typeof Razorpay === 'undefined' && retries < 10) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-          retries++;
-        }
-        if (typeof Razorpay === 'undefined') {
-          console.error('[Razorpay Checkout] Razorpay still not loaded after waiting');
-          alert('Payment gateway script failed to load. Please refresh the page and try again.');
-          return;
-        }
-        console.log('[Razorpay Checkout] Razorpay loaded after waiting');
-      }
-      
-      // Verify we have all required data
-      if (!data.key_id || !data.order_id) {
-        console.error('Missing required Razorpay data:', data);
-        alert('Invalid response from server. Missing payment gateway credentials.');
+      // Verify we have required data
+      if (!data.gateway || !data.checkout_data || !data.order_id) {
+        console.error('[Payment Gateway Checkout] Missing required payment data:', data);
+        alert('Invalid response from server. Missing payment gateway information.');
         return;
       }
       
-      // Configure Razorpay Checkout
-      const options = {
-        key: data.key_id,
-        order_id: data.order_id,
-        name: data.product_name,
-        description: data.product_name,
-        prefill: data.prefill,
-        handler: function (response) {
-          console.log('Payment successful:', response);
-          // Redirect to thank you page on successful payment
-          window.location.href = data.thank_you_url;
-        },
-        modal: {
-          ondismiss: function() {
-            // Optional: handle modal close
-            console.log('Payment modal closed');
-          }
-        }
-      };
+      const gateway = data.gateway.toLowerCase();
+      console.log('[Payment Gateway Checkout] Gateway:', gateway);
       
-      console.log('Opening Razorpay checkout with options:', { ...options, key: '***' });
-      
-      // Small delay to avoid blank page issues, then open Razorpay checkout
-      setTimeout(() => {
-        try {
-          const razorpay = new Razorpay(options);
-          razorpay.open();
-        } catch (error) {
-          console.error('Error opening Razorpay:', error);
-          alert('Failed to open payment gateway. Error: ' + error.message);
-        }
-      }, 700);
+      // Handle payment gateway based on response
+      if (gateway === 'razorpay') {
+        await handleRazorpayCheckout(data);
+      } else if (gateway === 'cashfree') {
+        await handleCashfreeCheckout(data);
+      } else {
+        console.error('[Payment Gateway Checkout] Unsupported gateway:', gateway);
+        alert('Unsupported payment gateway: ' + gateway);
+        return;
+      }
       
     } catch (error) {
       console.error('Error:', error);
@@ -390,25 +341,23 @@
       errorMessage += '\n\nPlease check the browser console (F12) for more details.';
       alert(errorMessage);
       }
-      } catch (outerError) {
-        // Catch any errors that occur during script initialization
-        console.error('[Razorpay Checkout] Fatal error in checkout script:', outerError);
-        console.error('[Razorpay Checkout] Error stack:', outerError.stack);
-        // Don't show alert for initialization errors to avoid breaking the page
-        // Just log to console
-      }
+      
+    } catch (outerError) {
+      // Catch any errors that occur during script initialization
+      console.error('[Payment Gateway Checkout] Fatal error in checkout script:', outerError);
+      console.error('[Payment Gateway Checkout] Error stack:', outerError.stack);
+      // Don't show alert for initialization errors to avoid breaking the page
+      // Just log to console
+    }
     })().catch(err => {
-      console.error('[Razorpay Checkout] Unhandled promise rejection:', err);
-      console.error('[Razorpay Checkout] Error stack:', err.stack);
+      console.error('[Payment Gateway Checkout] Unhandled promise rejection:', err);
+      console.error('[Payment Gateway Checkout] Error stack:', err.stack);
     });
   }
   
-  // If Razorpay is already loaded, initialize immediately
-  if (typeof Razorpay !== 'undefined') {
-    console.log('[Razorpay Checkout] Razorpay already loaded, initializing immediately');
-    initCheckout();
-  }
+  // Initialize immediately
+  initCheckout();
   
-  console.log('[Razorpay Checkout] Script initialization complete');
+  console.log('[Payment Gateway Checkout] Script initialization complete');
 </script>
 

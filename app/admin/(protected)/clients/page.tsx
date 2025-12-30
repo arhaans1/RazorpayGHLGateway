@@ -13,6 +13,9 @@ interface Client {
   name: string;
   razorpay_key_id: string;
   razorpay_key_secret: string;
+  cashfree_app_id?: string;
+  cashfree_secret_key?: string;
+  cashfree_env?: 'sandbox' | 'production';
   created_at: string;
 }
 
@@ -26,6 +29,9 @@ export default function ClientsPage() {
     name: '',
     razorpay_key_id: '',
     razorpay_key_secret: '',
+    cashfree_app_id: '',
+    cashfree_secret_key: '',
+    cashfree_env: 'production' as 'sandbox' | 'production',
   });
 
   useEffect(() => {
@@ -56,11 +62,14 @@ export default function ClientsPage() {
         // Update existing client
         const { error } = await supabase
           .from('clients')
-          .update({
-            name: formData.name,
-            razorpay_key_id: formData.razorpay_key_id,
-            razorpay_key_secret: formData.razorpay_key_secret,
-          })
+        .update({
+          name: formData.name,
+          razorpay_key_id: formData.razorpay_key_id,
+          razorpay_key_secret: formData.razorpay_key_secret,
+          cashfree_app_id: formData.cashfree_app_id || null,
+          cashfree_secret_key: formData.cashfree_secret_key || null,
+          cashfree_env: formData.cashfree_env,
+        })
           .eq('id', editingClient.id);
 
         if (error) throw error;
@@ -87,6 +96,9 @@ export default function ClientsPage() {
       name: client.name,
       razorpay_key_id: client.razorpay_key_id,
       razorpay_key_secret: client.razorpay_key_secret,
+      cashfree_app_id: client.cashfree_app_id || '',
+      cashfree_secret_key: client.cashfree_secret_key || '',
+      cashfree_env: client.cashfree_env || 'production',
     });
     setShowForm(true);
   };
@@ -121,7 +133,15 @@ export default function ClientsPage() {
           onClick={() => {
             setShowForm(!showForm);
             setEditingClient(null);
-            setFormData({ id: '', name: '', razorpay_key_id: '', razorpay_key_secret: '' });
+            setFormData({ 
+              id: '', 
+              name: '', 
+              razorpay_key_id: '', 
+              razorpay_key_secret: '',
+              cashfree_app_id: '',
+              cashfree_secret_key: '',
+              cashfree_env: 'production',
+            });
           }}
           style={{
             padding: '10px 20px',
@@ -217,6 +237,69 @@ export default function ClientsPage() {
               }}
             />
           </div>
+
+          <div style={{ marginTop: '30px', marginBottom: '15px', paddingTop: '20px', borderTop: '2px solid #ddd' }}>
+            <h3 style={{ marginBottom: '15px' }}>Cashfree (Optional)</h3>
+            <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+              Optional: Add Cashfree credentials if you want to use Cashfree payment gateway for some routes.
+            </p>
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+              Cashfree App ID
+            </label>
+            <input
+              type="text"
+              value={formData.cashfree_app_id}
+              onChange={(e) => setFormData({ ...formData, cashfree_app_id: e.target.value })}
+              placeholder="Optional - Leave empty if not using Cashfree"
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+              Cashfree Secret Key
+            </label>
+            <input
+              type="password"
+              value={formData.cashfree_secret_key}
+              onChange={(e) => setFormData({ ...formData, cashfree_secret_key: e.target.value })}
+              placeholder="Optional - Leave empty if not using Cashfree"
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+              Cashfree Environment
+            </label>
+            <select
+              value={formData.cashfree_env}
+              onChange={(e) => setFormData({ ...formData, cashfree_env: e.target.value as 'sandbox' | 'production' })}
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+              }}
+            >
+              <option value="production">Production</option>
+              <option value="sandbox">Sandbox (Testing)</option>
+            </select>
+          </div>
+
           <button
             type="submit"
             style={{
