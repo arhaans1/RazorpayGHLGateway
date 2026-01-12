@@ -95,7 +95,13 @@ const checkoutSnippet = `<!--
       modal: {
         ondismiss: function() {
           console.log('[Payment Gateway Checkout] Razorpay modal closed by user');
-          alert('Payment was cancelled. Please try again if you wish to complete the purchase.');
+          alert('Payment was cancelled. You will be redirected back.');
+          // Redirect back to landing page
+          if (document.referrer && document.referrer !== window.location.href) {
+            window.location.href = document.referrer;
+          } else {
+            window.history.back();
+          }
         }
       }
     };
@@ -110,7 +116,13 @@ const checkoutSnippet = `<!--
         // Handle payment failure
         razorpay.on('payment.failed', function (response) {
           console.error('[Payment Gateway Checkout] Razorpay payment failed:', response.error);
-          alert('Payment failed: ' + (response.error.description || 'Unknown error') + '\\n\\nPlease try again or use a different payment method.');
+          alert('Payment failed: ' + (response.error.description || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
+          // Redirect back to landing page
+          if (document.referrer && document.referrer !== window.location.href) {
+            window.location.href = document.referrer;
+          } else {
+            window.history.back();
+          }
         });
 
         razorpay.open();
@@ -169,6 +181,15 @@ const checkoutSnippet = `<!--
       redirectTarget: '_modal'
     };
 
+    // Helper function to redirect back to landing page
+    function redirectBack() {
+      if (document.referrer && document.referrer !== window.location.href) {
+        window.location.href = document.referrer;
+      } else {
+        window.history.back();
+      }
+    }
+
     // Open Cashfree checkout
     try {
       const result = await cashfree.checkout(checkoutOptions);
@@ -177,7 +198,8 @@ const checkoutSnippet = `<!--
       if (result.error) {
         // Payment had an error
         console.error('[Payment Gateway Checkout] Cashfree payment error:', result.error);
-        alert('Payment failed: ' + (result.error.message || 'Unknown error') + '\\n\\nPlease try again or use a different payment method.');
+        alert('Payment failed: ' + (result.error.message || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
+        redirectBack();
       } else if (result.paymentDetails) {
         // Check payment status
         const paymentStatus = result.paymentDetails.paymentMessage;
@@ -189,18 +211,21 @@ const checkoutSnippet = `<!--
           window.location.href = data.thank_you_url;
         } else {
           // Payment failed or cancelled
-          alert('Payment was not completed: ' + paymentStatus + '\\n\\nPlease try again if you wish to complete the purchase.');
+          alert('Payment was not completed: ' + paymentStatus + '\\n\\nYou will be redirected back to try again.');
+          redirectBack();
         }
       } else if (result.redirect) {
         // User was redirected (shouldn't happen in modal mode, but handle it)
         console.log('[Payment Gateway Checkout] Cashfree redirect detected');
       } else {
         // Modal was closed without completing payment
-        alert('Payment was cancelled. Please try again if you wish to complete the purchase.');
+        alert('Payment was cancelled. You will be redirected back.');
+        redirectBack();
       }
     } catch (error) {
       console.error('[Payment Gateway Checkout] Cashfree checkout error:', error);
-      alert('Payment failed: ' + (error.message || 'Unknown error') + '\\n\\nPlease try again.');
+      alert('Payment failed: ' + (error.message || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
+      redirectBack();
     }
   }
 
