@@ -90,7 +90,14 @@
       },
       modal: {
         ondismiss: function() {
-          console.log('[Payment Gateway Checkout] Razorpay modal closed');
+          console.log('[Payment Gateway Checkout] Razorpay modal closed by user');
+          alert('Payment was cancelled. You will be redirected back.');
+          // Redirect back to landing page
+          if (document.referrer && document.referrer !== window.location.href) {
+            window.location.href = document.referrer;
+          } else {
+            window.history.back();
+          }
         }
       }
     };
@@ -101,6 +108,19 @@
     setTimeout(() => {
       try {
         const razorpay = new Razorpay(options);
+
+        // Handle payment failure
+        razorpay.on('payment.failed', function (response) {
+          console.error('[Payment Gateway Checkout] Razorpay payment failed:', response.error);
+          alert('Payment failed: ' + (response.error.description || 'Unknown error') + '\n\nYou will be redirected back to try again.');
+          // Redirect back to landing page
+          if (document.referrer && document.referrer !== window.location.href) {
+            window.location.href = document.referrer;
+          } else {
+            window.history.back();
+          }
+        });
+
         razorpay.open();
       } catch (error) {
         console.error('[Payment Gateway Checkout] Error opening Razorpay:', error);
@@ -151,24 +171,57 @@
       mode: env === 'sandbox' ? 'sandbox' : 'production'
     });
 
-    // Checkout options
+    // Checkout options - use modal mode to handle result in callback
     const checkoutOptions = {
       paymentSessionId: checkoutData.payment_session_id,
-      redirectTarget: '_self'
+      redirectTarget: '_modal'
     };
+
+    // Helper function to redirect back to landing page
+    function redirectBack() {
+      if (document.referrer && document.referrer !== window.location.href) {
+        window.location.href = document.referrer;
+      } else {
+        window.history.back();
+      }
+    }
 
     // Open Cashfree checkout
     try {
-      await cashfree.checkout(checkoutOptions);
+      const result = await cashfree.checkout(checkoutOptions);
+      console.log('[Payment Gateway Checkout] Cashfree checkout result:', result);
+
+      if (result.error) {
+        // Payment had an error
+        console.error('[Payment Gateway Checkout] Cashfree payment error:', result.error);
+        alert('Payment failed: ' + (result.error.message || 'Unknown error') + '\n\nYou will be redirected back to try again.');
+        redirectBack();
+      } else if (result.paymentDetails) {
+        // Check payment status
+        const paymentStatus = result.paymentDetails.paymentMessage;
+        console.log('[Payment Gateway Checkout] Cashfree payment status:', paymentStatus);
+
+        if (paymentStatus === 'Payment finished' || paymentStatus === 'Payment successful') {
+          // Payment successful - redirect to thank you page
+          console.log('[Payment Gateway Checkout] Cashfree payment successful, redirecting...');
+          window.location.href = data.thank_you_url;
+        } else {
+          // Payment failed or cancelled
+          alert('Payment was not completed: ' + paymentStatus + '\n\nYou will be redirected back to try again.');
+          redirectBack();
+        }
+      } else if (result.redirect) {
+        // User was redirected (shouldn't happen in modal mode, but handle it)
+        console.log('[Payment Gateway Checkout] Cashfree redirect detected');
+      } else {
+        // Modal was closed without completing payment
+        alert('Payment was cancelled. You will be redirected back.');
+        redirectBack();
+      }
     } catch (error) {
       console.error('[Payment Gateway Checkout] Cashfree checkout error:', error);
-      // If modal fails, try redirect
-      if (data.thank_you_url) {
-        alert('Payment processing... Redirecting...');
-        window.location.href = data.thank_you_url;
-      } else {
-        throw error;
-      }
+      alert('Payment failed: ' + (error.message || 'Unknown error') + '\n\nYou will be redirected back to try again.');
+      redirectBack();
     }
   }
 
