@@ -197,17 +197,34 @@
         alert('Payment failed: ' + (result.error.message || 'Unknown error') + '\n\nYou will be redirected back to try again.');
         redirectBack();
       } else if (result.paymentDetails) {
-        // Check payment status
-        const paymentStatus = result.paymentDetails.paymentMessage;
-        console.log('[Payment Gateway Checkout] Cashfree payment status:', paymentStatus);
+        // Check payment status - Cashfree returns different formats
+        const paymentMessage = result.paymentDetails.paymentMessage || '';
+        const paymentStatus = result.paymentDetails.paymentStatus || '';
+        console.log('[Payment Gateway Checkout] Cashfree payment details:', {
+          paymentMessage,
+          paymentStatus,
+          fullDetails: result.paymentDetails
+        });
 
-        if (paymentStatus === 'Payment finished' || paymentStatus === 'Payment successful') {
+        // Check for success - Cashfree can return various success indicators:
+        // - paymentStatus: "SUCCESS"
+        // - paymentMessage: "Payment finished", "Payment finished. Check status.", "Payment successful", etc.
+        const isSuccess =
+          paymentStatus.toUpperCase() === 'SUCCESS' ||
+          paymentMessage.toLowerCase().includes('successful') ||
+          paymentMessage.toLowerCase().includes('finished');
+
+        if (isSuccess) {
           // Payment successful - redirect to thank you page
           console.log('[Payment Gateway Checkout] Cashfree payment successful, redirecting...');
           window.location.href = data.thank_you_url;
+        } else if (paymentStatus.toUpperCase() === 'FAILED' || paymentMessage.toLowerCase().includes('failed')) {
+          // Payment explicitly failed
+          alert('Payment failed: ' + (paymentMessage || 'Payment was declined') + '\n\nYou will be redirected back to try again.');
+          redirectBack();
         } else {
-          // Payment failed or cancelled
-          alert('Payment was not completed: ' + paymentStatus + '\n\nYou will be redirected back to try again.');
+          // Payment pending or cancelled
+          alert('Payment was not completed: ' + (paymentMessage || paymentStatus || 'Unknown status') + '\n\nYou will be redirected back to try again.');
           redirectBack();
         }
       } else if (result.redirect) {
