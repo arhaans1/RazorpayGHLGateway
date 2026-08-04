@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 
 const LINKS = [
   { href: '/admin', label: 'Dashboard', exact: true },
@@ -15,9 +15,21 @@ const LINKS = [
 
 export default function AdminNav() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isActive = (href: string, exact?: boolean) =>
     exact ? pathname === href : pathname === href || pathname.startsWith(href + '/');
+
+  /**
+   * Sign out is a button, not a <Link>. Next.js prefetches links in production,
+   * so linking to a logout endpoint makes the browser sign the user out on its
+   * own as soon as the nav renders.
+   */
+  async function signOut() {
+    await fetch('/api/admin/logout', { method: 'POST' });
+    router.push('/admin/login');
+    router.refresh();
+  }
 
   return (
     <nav className="nav">
@@ -38,9 +50,9 @@ export default function AdminNav() {
 
         <div className="spacer" />
 
-        <Link href="/api/admin/logout" className="nav-logout">
+        <button type="button" className="nav-logout" onClick={signOut}>
           Sign out
-        </Link>
+        </button>
       </div>
     </nav>
   );
