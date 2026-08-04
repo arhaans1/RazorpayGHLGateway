@@ -72,14 +72,15 @@
 
     // Get checkout data
     const checkoutData = data.checkout_data;
-    if (!checkoutData || !checkoutData.key || !checkoutData.order_id) {
+    const isSubscription = !!checkoutData && !!checkoutData.subscription_id;
+
+    if (!checkoutData || !checkoutData.key || (!checkoutData.order_id && !isSubscription)) {
       throw new Error('Invalid Razorpay checkout data received from server');
     }
 
     // Configure Razorpay Checkout
     const options = {
       key: checkoutData.key,
-      order_id: checkoutData.order_id,
       name: checkoutData.name || data.product_name,
       description: checkoutData.description || data.product_name,
       prefill: checkoutData.prefill || data.prefill,
@@ -101,6 +102,15 @@
         }
       }
     };
+
+    // Razorpay Checkout takes EITHER subscription_id (recurring) OR order_id
+    // (one-time) — never both. Sending both makes Checkout fail to open.
+    if (isSubscription) {
+      options.subscription_id = checkoutData.subscription_id;
+      console.log('[Payment Gateway Checkout] Recurring subscription:', checkoutData.subscription_id);
+    } else {
+      options.order_id = checkoutData.order_id;
+    }
 
     console.log('[Payment Gateway Checkout] Opening Razorpay checkout');
 

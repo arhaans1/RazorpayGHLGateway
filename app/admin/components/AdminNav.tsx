@@ -3,67 +3,45 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+const LINKS = [
+  { href: '/admin', label: 'Dashboard', exact: true },
+  { href: '/admin/clients', label: 'Clients' },
+  { href: '/admin/prices', label: 'Products' },
+  { href: '/admin/funnel-routes', label: 'Routes' },
+  { href: '/admin/transactions', label: 'Transactions' },
+  { href: '/admin/checkout-code', label: 'Checkout Code' },
+  { href: '/admin/form-redirect-urls', label: 'Redirect URLs' },
+];
+
 export default function AdminNav() {
   const pathname = usePathname();
 
-  const navStyle = {
-    backgroundColor: '#333',
-    padding: '15px 20px',
-    marginBottom: '20px',
-  };
-
-  const linkStyle = {
-    color: 'white',
-    textDecoration: 'none',
-    marginRight: '20px',
-    padding: '8px 12px',
-    borderRadius: '4px',
-  };
-
-  const activeLinkStyle = {
-    ...linkStyle,
-    backgroundColor: '#0070f3',
-  };
+  const isActive = (href: string, exact?: boolean) =>
+    exact ? pathname === href : pathname === href || pathname.startsWith(href + '/');
 
   return (
-    <nav style={navStyle}>
-      <Link
-        href="/admin/clients"
-        style={pathname === '/admin/clients' ? activeLinkStyle : linkStyle}
-      >
-        Clients
-      </Link>
-      <Link
-        href="/admin/prices"
-        style={pathname === '/admin/prices' ? activeLinkStyle : linkStyle}
-      >
-        Prices
-      </Link>
-      <Link
-        href="/admin/funnel-routes"
-        style={pathname === '/admin/funnel-routes' ? activeLinkStyle : linkStyle}
-      >
-        Funnel Routes
-      </Link>
-      <Link
-        href="/admin/checkout-code"
-        style={pathname === '/admin/checkout-code' ? activeLinkStyle : linkStyle}
-      >
-        Checkout Code
-      </Link>
-      <Link
-        href="/admin/form-redirect-urls"
-        style={pathname === '/admin/form-redirect-urls' ? activeLinkStyle : linkStyle}
-      >
-        Form Redirect URLs
-      </Link>
-      <Link
-        href="/api/admin/logout"
-        style={{ ...linkStyle, float: 'right' }}
-      >
-        Logout
-      </Link>
+    <nav className="nav">
+      <div className="nav-inner">
+        <div className="nav-brand">
+          Payment<span>Gateway</span>
+        </div>
+
+        {LINKS.map((link) => (
+          <Link
+            key={link.href}
+            href={link.href}
+            className={`nav-link ${isActive(link.href, link.exact) ? 'active' : ''}`}
+          >
+            {link.label}
+          </Link>
+        ))}
+
+        <div className="spacer" />
+
+        <Link href="/api/admin/logout" className="nav-logout">
+          Sign out
+        </Link>
+      </div>
     </nav>
   );
 }
-

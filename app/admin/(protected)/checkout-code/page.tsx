@@ -1,701 +1,121 @@
 'use client';
 
-import { useState } from 'react';
-
-const checkoutSnippet = `<!--
-  Universal Payment Gateway Checkout Snippet
-  Supports: Razorpay and Cashfree
-  Paste this into your GoHighLevel or Landing Page checkout page
-
-  IMPORTANT: Replace YOUR_VERCEL_URL with your actual Vercel deployment URL
-  Example: https://your-app.vercel.app
-
-  CUSTOMER DATA SOURCES (checked in order):
-  1. Manual override: Set window.razorpayCheckoutConfig = { name: '...', email: '...', phone: '...' } before this script
-  2. URL parameters: ?name=John&email=john@example.com&phone=1234567890
-  3. Form fields: Inputs with name/id "name", "email", "phone", "contact", etc.
-  4. JavaScript variables: window.name, window.email, window.phone, window.customer, etc.
-  5. localStorage/sessionStorage: customerName, customerEmail, customerPhone
-
-  If data is not found, the script will show a detailed error message with debugging info.
--->
-<script>
-  // Immediately log that script tag was parsed
-  console.log('[Payment Gateway Checkout] Script tag parsed and executing');
-
-  // Configuration: Replace with your Vercel deployment URL
-  const API_BASE_URL = 'https://razorpay-ghl-gateway.vercel.app'; // e.g., 'https://your-app.vercel.app'
-
-  // Helper function to load external scripts dynamically
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      // Check if script is already loaded
-      if (document.querySelector(\`script[src="\${src}"]\`)) {
-        console.log('[Payment Gateway Checkout] Script already loaded:', src);
-        resolve();
-        return;
-      }
-
-      const script = document.createElement('script');
-      script.src = src;
-      script.async = true;
-      script.onload = () => {
-        console.log('[Payment Gateway Checkout] Script loaded:', src);
-        resolve();
-      };
-      script.onerror = () => {
-        console.error('[Payment Gateway Checkout] Failed to load script:', src);
-        reject(new Error(\`Failed to load script: \${src}\`));
-      };
-      document.head.appendChild(script);
-    });
-  }
-
-  // Handle Razorpay checkout
-  async function handleRazorpayCheckout(data) {
-    console.log('[Payment Gateway Checkout] Handling Razorpay checkout');
-
-    // Load Razorpay script if not already loaded
-    if (typeof Razorpay === 'undefined') {
-      await loadScript('https://checkout.razorpay.com/v1/checkout.js');
-      // Wait a bit for the script to initialize
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Verify Razorpay is loaded
-    if (typeof Razorpay === 'undefined') {
-      let retries = 0;
-      while (typeof Razorpay === 'undefined' && retries < 10) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        retries++;
-      }
-      if (typeof Razorpay === 'undefined') {
-        throw new Error('Razorpay script failed to load. Please refresh the page and try again.');
-      }
-    }
-
-    // Get checkout data
-    const checkoutData = data.checkout_data;
-    if (!checkoutData || !checkoutData.key || !checkoutData.order_id) {
-      throw new Error('Invalid Razorpay checkout data received from server');
-    }
-
-    // Configure Razorpay Checkout
-    const options = {
-      key: checkoutData.key,
-      order_id: checkoutData.order_id,
-      name: checkoutData.name || data.product_name,
-      description: checkoutData.description || data.product_name,
-      prefill: checkoutData.prefill || data.prefill,
-      handler: function (response) {
-        console.log('[Payment Gateway Checkout] Razorpay payment successful:', response);
-        // Redirect to thank you page on successful payment
-        window.location.href = data.thank_you_url;
-      },
-      modal: {
-        ondismiss: function() {
-          console.log('[Payment Gateway Checkout] Razorpay modal closed by user');
-          alert('Payment was cancelled. You will be redirected back.');
-          // Redirect back to landing page
-          if (document.referrer && document.referrer !== window.location.href) {
-            window.location.href = document.referrer;
-          } else {
-            window.history.back();
-          }
-        }
-      }
-    };
-
-    console.log('[Payment Gateway Checkout] Opening Razorpay checkout');
-
-    // Small delay to avoid blank page issues, then open Razorpay checkout
-    setTimeout(() => {
-      try {
-        const razorpay = new Razorpay(options);
-
-        // Handle payment failure
-        razorpay.on('payment.failed', function (response) {
-          console.error('[Payment Gateway Checkout] Razorpay payment failed:', response.error);
-          alert('Payment failed: ' + (response.error.description || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
-          // Redirect back to landing page
-          if (document.referrer && document.referrer !== window.location.href) {
-            window.location.href = document.referrer;
-          } else {
-            window.history.back();
-          }
-        });
-
-        razorpay.open();
-      } catch (error) {
-        console.error('[Payment Gateway Checkout] Error opening Razorpay:', error);
-        alert('Failed to open payment gateway. Error: ' + error.message);
-      }
-    }, 100);
-  }
-
-  // Handle Cashfree checkout
-  async function handleCashfreeCheckout(data) {
-    console.log('[Payment Gateway Checkout] Handling Cashfree checkout');
-
-    // Get checkout data
-    const checkoutData = data.checkout_data;
-    if (!checkoutData || !checkoutData.payment_session_id) {
-      throw new Error('Invalid Cashfree checkout data received from server');
-    }
-
-    // Determine Cashfree SDK URL based on environment
-    const env = checkoutData.env || 'production';
-    const cashfreeSdkUrl = env === 'sandbox'
-      ? 'https://sdk.cashfree.com/js/v3/cashfree.sandbox.js'
-      : 'https://sdk.cashfree.com/js/v3/cashfree.js';
-
-    // Load Cashfree script if not already loaded
-    if (typeof Cashfree === 'undefined') {
-      await loadScript(cashfreeSdkUrl);
-      // Wait a bit for the script to initialize
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Verify Cashfree is loaded
-    if (typeof Cashfree === 'undefined') {
-      let retries = 0;
-      while (typeof Cashfree === 'undefined' && retries < 10) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        retries++;
-      }
-      if (typeof Cashfree === 'undefined') {
-        throw new Error('Cashfree script failed to load. Please refresh the page and try again.');
-      }
-    }
-
-    console.log('[Payment Gateway Checkout] Opening Cashfree checkout');
-
-    // Initialize Cashfree
-    const cashfree = Cashfree({
-      mode: env === 'sandbox' ? 'sandbox' : 'production'
-    });
-
-    // Checkout options - use modal mode to handle result in callback
-    const checkoutOptions = {
-      paymentSessionId: checkoutData.payment_session_id,
-      redirectTarget: '_modal'
-    };
-
-    // Helper function to redirect back to landing page
-    function redirectBack() {
-      if (document.referrer && document.referrer !== window.location.href) {
-        window.location.href = document.referrer;
-      } else {
-        window.history.back();
-      }
-    }
-
-    // Open Cashfree checkout
-    try {
-      const result = await cashfree.checkout(checkoutOptions);
-      console.log('[Payment Gateway Checkout] Cashfree checkout result:', result);
-
-      if (result.error) {
-        // Payment had an error
-        console.error('[Payment Gateway Checkout] Cashfree payment error:', result.error);
-        alert('Payment failed: ' + (result.error.message || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
-        redirectBack();
-      } else if (result.paymentDetails) {
-        // Check payment status - Cashfree returns different formats
-        const paymentMessage = result.paymentDetails.paymentMessage || '';
-        const paymentStatus = result.paymentDetails.paymentStatus || '';
-        console.log('[Payment Gateway Checkout] Cashfree payment details:', {
-          paymentMessage,
-          paymentStatus,
-          fullDetails: result.paymentDetails
-        });
-
-        // Check for success - Cashfree can return various success indicators:
-        // - paymentStatus: "SUCCESS"
-        // - paymentMessage: "Payment finished", "Payment finished. Check status.", "Payment successful", etc.
-        const isSuccess =
-          paymentStatus.toUpperCase() === 'SUCCESS' ||
-          paymentMessage.toLowerCase().includes('successful') ||
-          paymentMessage.toLowerCase().includes('finished');
-
-        if (isSuccess) {
-          // Payment successful - redirect to thank you page
-          console.log('[Payment Gateway Checkout] Cashfree payment successful, redirecting...');
-          window.location.href = data.thank_you_url;
-        } else if (paymentStatus.toUpperCase() === 'FAILED' || paymentMessage.toLowerCase().includes('failed')) {
-          // Payment explicitly failed
-          alert('Payment failed: ' + (paymentMessage || 'Payment was declined') + '\\n\\nYou will be redirected back to try again.');
-          redirectBack();
-        } else {
-          // Payment pending or cancelled
-          alert('Payment was not completed: ' + (paymentMessage || paymentStatus || 'Unknown status') + '\\n\\nYou will be redirected back to try again.');
-          redirectBack();
-        }
-      } else if (result.redirect) {
-        // User was redirected (shouldn't happen in modal mode, but handle it)
-        console.log('[Payment Gateway Checkout] Cashfree redirect detected');
-      } else {
-        // Modal was closed without completing payment
-        alert('Payment was cancelled. You will be redirected back.');
-        redirectBack();
-      }
-    } catch (error) {
-      console.error('[Payment Gateway Checkout] Cashfree checkout error:', error);
-      alert('Payment failed: ' + (error.message || 'Unknown error') + '\\n\\nYou will be redirected back to try again.');
-      redirectBack();
-    }
-  }
-
-  function initCheckout() {
-    console.log('[Payment Gateway Checkout] initCheckout called');
-    (async () => {
-      console.log('[Payment Gateway Checkout] Async function started');
-      try {
-        console.log('[Payment Gateway Checkout] Current readyState:', document.readyState);
-
-        // Wait for page to be fully loaded
-        if (document.readyState === 'loading') {
-          console.log('[Payment Gateway Checkout] Waiting for page to load...');
-          await new Promise(resolve => {
-            if (document.readyState === 'complete') {
-              console.log('[Payment Gateway Checkout] Page already complete');
-              resolve();
-            } else {
-              document.addEventListener('DOMContentLoaded', resolve);
-              // Also wait a bit for dynamic content
-              setTimeout(() => {
-                console.log('[Payment Gateway Checkout] Timeout reached, proceeding');
-                resolve();
-              }, 500);
-            }
-          });
-        } else {
-          console.log('[Payment Gateway Checkout] Page already loaded, proceeding');
-        }
-
-        // Helper function to safely get value from multiple sources
-        function getValue(sources) {
-          for (const source of sources) {
-            try {
-              if (source && typeof source === 'string' && source.trim()) {
-                return source.trim();
-              }
-            } catch (e) {
-              // Skip this source if it causes an error
-              continue;
-            }
-          }
-          return '';
-        }
-
-        // Helper to safely access localStorage
-        function safeGetStorage(key, storage) {
-          try {
-            return storage.getItem(key);
-          } catch (e) {
-            return null;
-          }
-        }
-
-        // Get current page URL
-        const page_url = window.location.href;
-
-        // Helper function to extract values (will be called multiple times)
-        function extractValues() {
-          const urlParams = new URLSearchParams(window.location.search);
-
-          // Handle GHL format: first_name + last_name or combined name
-          let combinedName = '';
-          const firstName = urlParams.get('first_name') || urlParams.get('fname') || '';
-          const lastName = urlParams.get('last_name') || urlParams.get('lname') || '';
-          if (firstName && lastName) {
-            combinedName = \`\${firstName} \${lastName}\`.trim();
-          } else if (firstName) {
-            combinedName = firstName;
-          } else if (lastName) {
-            combinedName = lastName;
-          }
-
-          const name = getValue([
-            window.razorpayCheckoutConfig?.name,
-            urlParams.get('name'),
-            urlParams.get('full_name'),
-            urlParams.get('fullname'),
-            combinedName, // Combined first_name + last_name from GHL
-            urlParams.get('fname'),
-            urlParams.get('first_name'),
-            document.querySelector('input[name="name"]')?.value,
-            document.querySelector('input[name="fname"]')?.value,
-            document.querySelector('input[name="first_name"]')?.value,
-            document.querySelector('input[name="firstName"]')?.value,
-            document.querySelector('#name')?.value,
-            document.querySelector('#fname')?.value,
-            document.querySelector('[data-name]')?.getAttribute('data-name'),
-            document.querySelector('[data-field="name"]')?.value,
-            window.customerName,
-            window.firstName,
-            window.customer?.name,
-            window.customer?.firstName,
-            safeGetStorage('customerName', localStorage),
-            safeGetStorage('customerName', sessionStorage)
-          ]);
-
-          const email = getValue([
-            window.razorpayCheckoutConfig?.email,
-            urlParams.get('email'),
-            urlParams.get('e-mail'),
-            document.querySelector('input[name="email"]')?.value,
-            document.querySelector('input[name="e-mail"]')?.value,
-            document.querySelector('input[type="email"]')?.value,
-            document.querySelector('#email')?.value,
-            document.querySelector('[data-email]')?.getAttribute('data-email'),
-            document.querySelector('[data-field="email"]')?.value,
-            window.email,
-            window.customerEmail,
-            window.userEmail,
-            window.customer?.email,
-            safeGetStorage('customerEmail', localStorage),
-            safeGetStorage('customerEmail', sessionStorage)
-          ]);
-
-          const phone = getValue([
-            window.razorpayCheckoutConfig?.phone || window.razorpayCheckoutConfig?.contact,
-            urlParams.get('phone'),
-            urlParams.get('contact'),
-            urlParams.get('mobile'),
-            urlParams.get('tel'),
-            urlParams.get('phoneNumber'),
-            document.querySelector('input[name="phone"]')?.value,
-            document.querySelector('input[name="contact"]')?.value,
-            document.querySelector('input[name="mobile"]')?.value,
-            document.querySelector('input[name="tel"]')?.value,
-            document.querySelector('input[name="phoneNumber"]')?.value,
-            document.querySelector('input[type="tel"]')?.value,
-            document.querySelector('#phone')?.value,
-            document.querySelector('#contact')?.value,
-            document.querySelector('#mobile')?.value,
-            document.querySelector('[data-phone]')?.getAttribute('data-phone'),
-            document.querySelector('[data-contact]')?.getAttribute('data-contact'),
-            document.querySelector('[data-field="phone"]')?.value,
-            window.phone,
-            window.contact,
-            window.mobile,
-            window.customerPhone,
-            window.customer?.phone,
-            window.customer?.contact,
-            safeGetStorage('customerPhone', localStorage),
-            safeGetStorage('customerPhone', sessionStorage)
-          ]);
-
-          return { name, email, phone };
-        }
-
-        // Try to extract values with retries (GHL might load data dynamically)
-        let { name, email, phone } = extractValues();
-        let retries = 0;
-        const maxRetries = 10; // Try for up to 5 seconds (10 * 500ms)
-
-        console.log('[Payment Gateway Checkout] Initial extracted values:', { name, email, phone, page_url });
-
-        // Wait and retry if data is missing (GHL might populate forms dynamically)
-        while ((!name || !email || !phone) && retries < maxRetries) {
-          console.log(\`[Payment Gateway Checkout] Missing data, retry \${retries + 1}/\${maxRetries}...\`);
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const extracted = extractValues();
-          name = extracted.name;
-          email = extracted.email;
-          phone = extracted.phone;
-          retries++;
-
-          if (name && email && phone) {
-            console.log('[Payment Gateway Checkout] Data found after retry:', { name, email, phone });
-            break;
-          }
-        }
-
-        // Final debug: Log what we found
-        console.log('[Payment Gateway Checkout] Final extracted values:', { name, email, phone, page_url });
-
-        try {
-          // Validate required fields
-          const missingFields = [];
-          if (!name) missingFields.push('name');
-          if (!email) missingFields.push('email');
-          if (!phone) missingFields.push('phone/contact');
-
-          if (missingFields.length > 0) {
-            // Get all inputs for debugging
-            const allInputs = Array.from(document.querySelectorAll('input, textarea, select'));
-            const formFields = allInputs.map(input => ({
-              name: input.name,
-              id: input.id,
-              type: input.type,
-              className: input.className,
-              value: input.value ? (input.type === 'password' ? '***' : input.value.substring(0, 20)) : '(empty)'
-            }));
-
-            // Check for GHL-specific data
-            const ghlData = {
-              windowKeys: Object.keys(window).filter(k =>
-                k.toLowerCase().includes('customer') ||
-                k.toLowerCase().includes('lead') ||
-                k.toLowerCase().includes('contact') ||
-                k.toLowerCase().includes('email') ||
-                k.toLowerCase().includes('phone')
-              ),
-              dataAttributes: Array.from(document.querySelectorAll('*')).filter(el =>
-                Array.from(el.attributes).some(attr => attr.name.startsWith('data-'))
-              ).slice(0, 10).map(el => ({
-                tag: el.tagName,
-                attributes: Array.from(el.attributes).filter(attr => attr.name.startsWith('data-')).map(attr => attr.name)
-              }))
-            };
-
-            console.error('[Payment Gateway Checkout] Missing fields:', missingFields);
-            console.error('[Payment Gateway Checkout] Available form fields:', formFields);
-            console.error('[Payment Gateway Checkout] GHL data check:', ghlData);
-
-            const errorMsg = \`Missing required information: \${missingFields.join(', ')}\\n\\n\` +
-              \`The script tried to find these values from multiple sources but couldn't find them.\\n\\n\` +
-              \`SOLUTIONS:\\n\` +
-              \`1. Add URL parameters: \${page_url}?name=John&email=john@example.com&phone=1234567890\\n\` +
-              \`2. Set JavaScript variables before this script:\\n\` +
-              \`   window.razorpayCheckoutConfig = { name: 'John', email: 'john@example.com', phone: '1234567890' };\\n\` +
-              \`3. Ensure form fields exist with names: name, email, phone, contact\\n\\n\` +
-              \`Current URL: \${page_url}\\n\` +
-              \`Found values: name="\${name}", email="\${email}", phone="\${phone}"\\n\` +
-              \`Form fields found: \${formFields.length}\\n\` +
-              \`Check browser console (F12) for detailed debugging info.\`;
-
-            alert(errorMsg);
-            return;
-          }
-
-          console.log('[Payment Gateway Checkout] Creating order with:', { page_url, name, email, contact: phone });
-          console.log('[Payment Gateway Checkout] API URL:', \`\${API_BASE_URL}/api/create-order\`);
-
-          // Call backend API to create order
-          const response = await fetch(\`\${API_BASE_URL}/api/create-order\`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              page_url: page_url,
-              name: name,
-              email: email,
-              contact: phone,
-            }),
-          });
-
-          // Check if response is ok
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'unknown_error', detail: \`HTTP \${response.status}: \${response.statusText}\` }));
-            console.error('[Payment Gateway Checkout] API Error Response:', errorData);
-            throw new Error(JSON.stringify(errorData));
-          }
-
-          const data = await response.json();
-          console.log('[Payment Gateway Checkout] API Response:', data);
-
-          // Check for errors
-          if (!data.order_id) {
-            console.error('[Payment Gateway Checkout] Order creation failed - Response data:', data);
-
-            // Show detailed error message
-            let errorMessage = 'Order creation failed.\\n\\n';
-            if (data.error) {
-              errorMessage += 'Error Type: ' + data.error + '\\n';
-            }
-            if (data.detail) {
-              if (typeof data.detail === 'string') {
-                errorMessage += '\\nDetails: ' + data.detail;
-              } else {
-                errorMessage += '\\nDetails: ' + JSON.stringify(data.detail, null, 2);
-              }
-            }
-            if (data.gateway_response) {
-              errorMessage += '\\n\\n' + (data.gateway || 'Gateway') + ' Response: ' + JSON.stringify(data.gateway_response, null, 2);
-            }
-            errorMessage += '\\n\\nPlease check the browser console (F12) for more details.';
-
-            alert(errorMessage);
-            return;
-          }
-
-          // Verify we have required data
-          if (!data.gateway || !data.checkout_data || !data.order_id) {
-            console.error('[Payment Gateway Checkout] Missing required payment data:', data);
-            alert('Invalid response from server. Missing payment gateway information.');
-            return;
-          }
-
-          const gateway = data.gateway.toLowerCase();
-          console.log('[Payment Gateway Checkout] Gateway:', gateway);
-
-          // Handle payment gateway based on response
-          if (gateway === 'razorpay') {
-            await handleRazorpayCheckout(data);
-          } else if (gateway === 'cashfree') {
-            await handleCashfreeCheckout(data);
-          } else {
-            console.error('[Payment Gateway Checkout] Unsupported gateway:', gateway);
-            alert('Unsupported payment gateway: ' + gateway);
-            return;
-          }
-
-        } catch (error) {
-          console.error('[Payment Gateway Checkout] Error:', error);
-          let errorMessage = 'An error occurred. ';
-          try {
-            const errorData = JSON.parse(error.message);
-            if (errorData.error) {
-              errorMessage += '\\n\\nError: ' + errorData.error;
-            }
-            if (errorData.detail) {
-              if (typeof errorData.detail === 'string') {
-                errorMessage += '\\n\\nDetails: ' + errorData.detail;
-              } else {
-                errorMessage += '\\n\\nDetails: ' + JSON.stringify(errorData.detail, null, 2);
-              }
-            }
-          } catch (e) {
-            errorMessage += '\\n\\n' + error.message;
-          }
-          errorMessage += '\\n\\nPlease check the browser console (F12) for more details.';
-          alert(errorMessage);
-        }
-
-      } catch (outerError) {
-        // Catch any errors that occur during script initialization
-        console.error('[Payment Gateway Checkout] Fatal error in checkout script:', outerError);
-        console.error('[Payment Gateway Checkout] Error stack:', outerError.stack);
-        // Don't show alert for initialization errors to avoid breaking the page
-        // Just log to console
-      }
-    })().catch(err => {
-      console.error('[Payment Gateway Checkout] Unhandled promise rejection:', err);
-      console.error('[Payment Gateway Checkout] Error stack:', err.stack);
-    });
-  }
-
-  // Initialize immediately
-  initCheckout();
-
-  console.log('[Payment Gateway Checkout] Script initialization complete');
-</script>`;
+import { useEffect, useState } from 'react';
+import { Spinner } from '../../components/ui';
+
+/**
+ * The snippet is served from /checkout-snippet.html rather than duplicated here
+ * as a string literal. Previously the same ~500 lines existed in both places and
+ * drifted apart whenever only one was patched.
+ */
+const SNIPPET_URL = '/checkout-snippet.html';
 
 export default function CheckoutCodePage() {
+  const [snippet, setSnippet] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = async () => {
+  useEffect(() => {
+    fetch(SNIPPET_URL)
+      .then((r) => {
+        if (!r.ok) throw new Error(`Could not load the snippet (${r.status})`);
+        return r.text();
+      })
+      .then(setSnippet)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(checkoutSnippet);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-      // Fallback for older browsers
-      const textArea = document.createElement('textarea');
-      textArea.value = checkoutSnippet;
-      document.body.appendChild(textArea);
-      textArea.select();
+      await navigator.clipboard.writeText(snippet);
+    } catch {
+      // clipboard API needs a secure context; fall back to a temp textarea.
+      const el = document.createElement('textarea');
+      el.value = snippet;
+      document.body.appendChild(el);
+      el.select();
       document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      document.body.removeChild(el);
     }
-  };
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>Checkout Code</h1>
-        <button
-          onClick={handleCopy}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: copied ? '#28a745' : '#0070f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: 'bold',
-          }}
-        >
-          {copied ? 'Copied!' : 'Copy Code'}
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Checkout code</h1>
+          <p className="page-subtitle">
+            Paste this into the checkout page of any funnel you&apos;ve configured a route for.
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={copy} disabled={!snippet}>
+          {copied ? 'Copied' : 'Copy code'}
         </button>
       </div>
 
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          padding: '20px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        }}
-      >
-        <div style={{ marginBottom: '15px' }}>
-          <h2 style={{ marginBottom: '10px' }}>Universal Payment Gateway Checkout Snippet</h2>
-          <p style={{ color: '#666', marginBottom: '10px' }}>
-            Copy this code and paste it into your GoHighLevel or Landing Page checkout page.
-          </p>
-          <p style={{ color: '#666', fontSize: '14px' }}>
-            <strong>Note:</strong> The code supports both Razorpay and Cashfree payment gateways. The gateway is automatically selected based on your funnel route configuration. The code is already configured with your Vercel URL. Just copy and paste!
-          </p>
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <div className="stack">
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">How to use it</div>
+          </div>
+          <div className="card-pad">
+            <ol style={{ paddingLeft: 18, lineHeight: 1.9 }}>
+              <li>Add the client, product and funnel route in this admin panel first.</li>
+              <li>
+                Open the checkout page in GoHighLevel and add a <strong>Custom Code</strong> block.
+              </li>
+              <li>Paste the snippet below and publish the page.</li>
+              <li>
+                Make sure the form sends <code className="mono">name</code>,{' '}
+                <code className="mono">email</code> and <code className="mono">phone</code> as URL
+                parameters to that page.
+              </li>
+            </ol>
+            <div className="alert alert-info" style={{ marginTop: 14, marginBottom: 0 }}>
+              The same snippet handles Razorpay and Cashfree, and one-time and subscription
+              products. Which one runs is decided by the funnel route, so you never need a
+              different snippet per page.
+            </div>
+          </div>
         </div>
 
-        <div
-          style={{
-            backgroundColor: '#f5f5f5',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            padding: '15px',
-            position: 'relative',
-          }}
-        >
-          <pre
-            style={{
-              margin: 0,
-              fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, "source-code-pro", monospace',
-              fontSize: '13px',
-              lineHeight: '1.5',
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            <code>{checkoutSnippet}</code>
-          </pre>
-        </div>
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">Snippet</div>
+            <button className="btn btn-secondary btn-sm" onClick={copy} disabled={!snippet}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
 
-        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#e7f3ff', borderRadius: '4px' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '10px' }}>How to Use:</h3>
-          <ol style={{ margin: 0, paddingLeft: '20px' }}>
-            <li style={{ marginBottom: '8px' }}>Click the "Copy Code" button above</li>
-            <li style={{ marginBottom: '8px' }}>Go to your GoHighLevel or Landing Page checkout page</li>
-            <li style={{ marginBottom: '8px' }}>Add a "Custom Code" or "HTML" block</li>
-            <li style={{ marginBottom: '8px' }}>Paste the copied code</li>
-            <li style={{ marginBottom: '8px' }}>Save and publish your page</li>
-          </ol>
-        </div>
-
-        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#fff3cd', borderRadius: '4px' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '10px' }}>Supported Payment Gateways:</h3>
-          <ul style={{ margin: 0, paddingLeft: '20px' }}>
-            <li style={{ marginBottom: '8px' }}>
-              <strong>Razorpay</strong> - The script will automatically load the Razorpay checkout modal
-            </li>
-            <li style={{ marginBottom: '8px' }}>
-              <strong>Cashfree</strong> - The script will automatically load the Cashfree checkout (supports both sandbox and production)
-            </li>
-          </ul>
-          <p style={{ marginTop: '10px', fontSize: '14px', color: '#856404' }}>
-            The gateway is automatically selected based on your funnel route configuration. Make sure to configure the correct credentials for your chosen gateway in the Clients page.
-          </p>
+          {loading ? (
+            <Spinner />
+          ) : (
+            <pre
+              style={{
+                margin: 0,
+                padding: 18,
+                background: 'var(--surface-alt)',
+                borderRadius: '0 0 10px 10px',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontSize: 12,
+                lineHeight: 1.6,
+                overflowX: 'auto',
+                maxHeight: 460,
+                overflowY: 'auto',
+                color: 'var(--text)',
+              }}
+            >
+              <code>{snippet}</code>
+            </pre>
+          )}
         </div>
       </div>
-    </div>
+    </>
   );
 }

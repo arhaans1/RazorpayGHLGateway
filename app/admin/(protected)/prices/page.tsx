@@ -1,12 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  adminFetch,
+  formatAmount,
+  describeBilling,
+  Modal,
+  Spinner,
+  EmptyState,
+  TypeBadge,
+} from '../../components/ui';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+interface Client {
+  id: string;
+  name: string;
+}
 
 interface Price {
   id: string;
@@ -15,409 +23,525 @@ interface Price {
   amount_paise: number;
   currency: string;
   thank_you_url: string;
+  payment_type: string;
+  razorpay_plan_id: string | null;
+  billing_period: string | null;
+  billing_interval: number | null;
+  total_count: number | null;
   created_at: string;
 }
 
-interface Client {
-  id: string;
-  name: string;
-}
+const BLANK = {
+  id: '',
+  client_id: '',
+  product_name: '',
+  amount_rupees: '',
+  currency: 'INR',
+  thank_you_url: '',
+  payment_type: 'one_time',
+  billing_period: 'monthly',
+  billing_interval: '1',
+  total_count: '12',
+};
 
-export default function PricesPage() {
-  const [prices, setPrices] = useState<Price[]>([]);
+export default function ProductsPage() {
   const [clients, setClients] = useState<Client[]>([]);
+  const [prices, setPrices] = useState<Price[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingPrice, setEditingPrice] = useState<Price | null>(null);
-  const [filterClientId, setFilterClientId] = useState<string>('');
-  const [formData, setFormData] = useState({
-    id: '',
-    client_id: '',
-    product_name: '',
-    amount_paise: '',
-    currency: 'INR',
-    thank_you_url: '',
-  });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Price | null>(null);
+  const [form, setForm] = useState({ ...BLANK });
+  const [saving, setSaving] = useState(false);
+  const [planBusy, setPlanBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchClients();
-    fetchPrices();
+    load();
   }, []);
 
-  const fetchClients = async () => {
+  async function load() {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('id, name')
-        .order('name');
-
-      if (error) throw error;
-      setClients(data || []);
-    } catch (error: any) {
-      console.error('Error fetching clients:', error);
-    }
-  };
-
-  const fetchPrices = async () => {
-    try {
-      let query = supabase.from('prices').select('*').order('created_at', { ascending: false });
-
-      if (filterClientId) {
-        query = query.eq('client_id', filterClientId);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setPrices(data || []);
-    } catch (error: any) {
-      console.error('Error fetching prices:', error);
-      alert('Error loading prices: ' + error.message);
+      const [c, p] = await Promise.all([
+        adminFetch<{ clients: Client[] }>('/api/admin/clients'),
+        adminFetch<{ prices: Price[] }>('/api/admin/prices'),
+      ]);
+      setClients(c.clients);
+      setPrices(p.prices);
+      // Open every client group by default so nothing is hidden on first load.
+      setExpanded(new Set(c.clients.map((x) => x.id)));
+      setError('');
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  useEffect(() => {
-    fetchPrices();
-  }, [filterClientId]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const priceData = {
-        ...formData,
-        amount_paise: parseInt(formData.amount_paise),
-      };
-
-      if (editingPrice) {
-        const { error } = await supabase
-          .from('prices')
-          .update(priceData)
-          .eq('id', editingPrice.id);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('prices').insert([priceData]);
-        if (error) throw error;
-      }
-
-      setShowForm(false);
-      setEditingPrice(null);
-      setFormData({
-        id: '',
-        client_id: '',
-        product_name: '',
-        amount_paise: '',
-        currency: 'INR',
-        thank_you_url: '',
-      });
-      fetchPrices();
-    } catch (error: any) {
-      console.error('Error saving price:', error);
-      alert('Error saving price: ' + error.message);
+  /** Products bucketed under their owning client. */
+  const grouped = useMemo(() => {
+    const map = new Map<string, Price[]>();
+    for (const client of clients) map.set(client.id, []);
+    for (const price of prices) {
+      if (!map.has(price.client_id)) map.set(price.client_id, []);
+      map.get(price.client_id)!.push(price);
     }
-  };
+    return map;
+  }, [clients, prices]);
 
-  const handleEdit = (price: Price) => {
-    setEditingPrice(price);
-    setFormData({
+  function toggle(clientId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }
+
+  function openCreate(clientId?: string) {
+    setEditing(null);
+    setForm({ ...BLANK, client_id: clientId || clients[0]?.id || '' });
+    setModalOpen(true);
+  }
+
+  function openEdit(price: Price) {
+    setEditing(price);
+    setForm({
       id: price.id,
       client_id: price.client_id,
       product_name: price.product_name,
-      amount_paise: price.amount_paise.toString(),
-      currency: price.currency,
-      thank_you_url: price.thank_you_url,
+      // Rupees in the UI, paise in the database — operators think in rupees.
+      amount_rupees: String((price.amount_paise ?? 0) / 100),
+      currency: price.currency || 'INR',
+      thank_you_url: price.thank_you_url || '',
+      payment_type: price.payment_type || 'one_time',
+      billing_period: price.billing_period || 'monthly',
+      billing_interval: String(price.billing_interval || 1),
+      total_count: price.total_count != null ? String(price.total_count) : '',
     });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this price?')) return;
-
-    try {
-      const { error } = await supabase.from('prices').delete().eq('id', id);
-      if (error) throw error;
-      fetchPrices();
-    } catch (error: any) {
-      console.error('Error deleting price:', error);
-      alert('Error deleting price: ' + error.message);
-    }
-  };
-
-  const formatAmount = (paise: number) => {
-    return `₹${(paise / 100).toFixed(2)}`;
-  };
-
-  if (loading) {
-    return <div>Loading...</div>;
+    setModalOpen(true);
   }
 
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    const rupees = Number(form.amount_rupees);
+    if (!Number.isFinite(rupees) || rupees <= 0) {
+      setError('Enter a valid amount greater than zero.');
+      setSaving(false);
+      return;
+    }
+
+    const payload: any = {
+      id: form.id.trim(),
+      client_id: form.client_id,
+      product_name: form.product_name.trim(),
+      amount_paise: Math.round(rupees * 100),
+      currency: form.currency,
+      thank_you_url: form.thank_you_url.trim(),
+      payment_type: form.payment_type,
+    };
+
+    if (form.payment_type === 'subscription') {
+      payload.billing_period = form.billing_period;
+      payload.billing_interval = Number(form.billing_interval) || 1;
+      payload.total_count = form.total_count ? Number(form.total_count) : null;
+      if (editing) payload.razorpay_plan_id = editing.razorpay_plan_id;
+    }
+
+    try {
+      await adminFetch('/api/admin/prices', {
+        method: editing ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      setModalOpen(false);
+      await load();
+      setNotice(editing ? 'Product updated.' : 'Product created.');
+      setTimeout(() => setNotice(''), 3000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(price: Price) {
+    if (!confirm(`Delete "${price.product_name}"? Funnel routes using it will break.`)) return;
+
+    try {
+      await adminFetch(`/api/admin/prices?id=${encodeURIComponent(price.id)}`, {
+        method: 'DELETE',
+      });
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function createPlan(price: Price) {
+    setPlanBusy(price.id);
+    setError('');
+    try {
+      const res = await adminFetch<{ plan_id: string }>('/api/admin/prices/create-plan', {
+        method: 'POST',
+        body: JSON.stringify({ price_id: price.id }),
+      });
+      await load();
+      setNotice(`Razorpay plan created: ${res.plan_id}`);
+      setTimeout(() => setNotice(''), 5000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPlanBusy(null);
+    }
+  }
+
+  if (loading) return <Spinner />;
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>Prices</h1>
-        <button
-          onClick={() => {
-            setShowForm(!showForm);
-            setEditingPrice(null);
-            setFormData({
-              id: '',
-              client_id: '',
-              product_name: '',
-              amount_paise: '',
-              currency: 'INR',
-              thank_you_url: '',
-            });
-          }}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#0070f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          {showForm ? 'Cancel' : 'Add Price'}
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Products</h1>
+          <p className="page-subtitle">Prices and checkout redirects, grouped by client.</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => openCreate()} disabled={!clients.length}>
+          + Add product
         </button>
       </div>
 
-      <div style={{ marginBottom: '20px' }}>
-        <label style={{ marginRight: '10px', fontWeight: 'bold' }}>Filter by Client:</label>
-        <select
-          value={filterClientId}
-          onChange={(e) => setFilterClientId(e.target.value)}
-          style={{
-            padding: '8px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            minWidth: '200px',
-          }}
-        >
-          <option value="">All Clients</option>
-          {clients.map((client) => (
-            <option key={client.id} value={client.id}>
-              {client.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
 
-      {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            backgroundColor: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          }}
-        >
-          <h2>{editingPrice ? 'Edit Price' : 'Add New Price'}</h2>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              ID (unique identifier)
-            </label>
-            <input
-              type="text"
-              value={formData.id}
-              onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-              required
-              disabled={!!editingPrice}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Client
-            </label>
-            <select
-              value={formData.client_id}
-              onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            >
-              <option value="">Select a client</option>
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Product Name
-            </label>
-            <input
-              type="text"
-              value={formData.product_name}
-              onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Amount (in paise, e.g., 199900 for ₹1,999)
-            </label>
-            <input
-              type="number"
-              value={formData.amount_paise}
-              onChange={(e) => setFormData({ ...formData, amount_paise: e.target.value })}
-              required
-              min="1"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Currency
-            </label>
-            <select
-              value={formData.currency}
-              onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            >
-              <option value="INR">INR</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Thank You URL (full URL to redirect after payment)
-            </label>
-            <input
-              type="url"
-              value={formData.thank_you_url}
-              onChange={(e) => setFormData({ ...formData, thank_you_url: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <button
-            type="submit"
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#0070f3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            {editingPrice ? 'Update Price' : 'Create Price'}
-          </button>
-        </form>
+      {clients.length === 0 ? (
+        <div className="card">
+          <EmptyState title="No clients yet" hint="Add a client before creating products." />
+        </div>
+      ) : (
+        <div className="stack">
+          {clients.map((client) => {
+            const items = grouped.get(client.id) ?? [];
+            const isOpen = expanded.has(client.id);
+
+            return (
+              <div className="group" key={client.id}>
+                <button
+                  className={`group-head ${isOpen ? 'open' : ''}`}
+                  onClick={() => toggle(client.id)}
+                >
+                  <span className={`group-chevron ${isOpen ? 'open' : ''}`}>▶</span>
+                  <span className="group-name">{client.name}</span>
+                  <span className="group-id">{client.id}</span>
+                  <span className="spacer" />
+                  <span className="badge badge-gray">
+                    {items.length} {items.length === 1 ? 'product' : 'products'}
+                  </span>
+                  <span
+                    className="btn btn-ghost btn-sm"
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openCreate(client.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        openCreate(client.id);
+                      }
+                    }}
+                  >
+                    + Add
+                  </span>
+                </button>
+
+                {isOpen && (
+                  <div className="group-body">
+                    {items.length === 0 ? (
+                      <EmptyState title="No products for this client yet" />
+                    ) : (
+                      <div className="table-wrap">
+                        <table className="data fixed">
+                          <colgroup>
+                            <col style={{ width: '25%' }} />
+                            <col style={{ width: '11%' }} />
+                            <col style={{ width: '12%' }} />
+                            <col style={{ width: '18%' }} />
+                            <col style={{ width: '22%' }} />
+                            <col style={{ width: '12%' }} />
+                          </colgroup>
+                          <thead>
+                            <tr>
+                              <th>Product</th>
+                              <th>Price</th>
+                              <th>Type</th>
+                              <th>Billing</th>
+                              <th>Thank-you URL</th>
+                              <th style={{ textAlign: 'right' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((price) => (
+                              <tr key={price.id}>
+                                <td>
+                                  <div style={{ fontWeight: 550 }}>{price.product_name}</div>
+                                  <div className="mono" style={{ color: 'var(--text-faint)' }}>
+                                    {price.id}
+                                  </div>
+                                </td>
+                                <td className="num">
+                                  {formatAmount(price.amount_paise, price.currency)}
+                                </td>
+                                <td>
+                                  <TypeBadge paymentType={price.payment_type} />
+                                </td>
+                                <td>
+                                  <div>{describeBilling(price)}</div>
+                                  {price.payment_type === 'subscription' && (
+                                    <div style={{ marginTop: 4 }}>
+                                      {price.razorpay_plan_id ? (
+                                        <span
+                                          className="mono"
+                                          style={{ color: 'var(--text-faint)' }}
+                                        >
+                                          {price.razorpay_plan_id}
+                                        </span>
+                                      ) : (
+                                        <button
+                                          className="btn btn-ghost btn-sm"
+                                          onClick={() => createPlan(price)}
+                                          disabled={planBusy === price.id}
+                                        >
+                                          {planBusy === price.id
+                                            ? 'Creating…'
+                                            : 'Create plan in Razorpay'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                <td>
+                                  <a
+                                    href={price.thank_you_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="truncate"
+                                    style={{ color: 'var(--blue)' }}
+                                    title={price.thank_you_url}
+                                  >
+                                    {price.thank_you_url}
+                                  </a>
+                                </td>
+                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => openEdit(price)}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => remove(price)}
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        }}
+      <Modal
+        open={modalOpen}
+        title={editing ? 'Edit product' : 'New product'}
+        onClose={() => setModalOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setModalOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create product'}
+            </button>
+          </>
+        }
       >
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f5f5f5' }}>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>ID</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Client</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Product</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Amount</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Currency</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Thank You URL</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {prices.map((price) => (
-              <tr key={price.id}>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{price.id}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{price.client_id}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{price.product_name}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {formatAmount(price.amount_paise)}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{price.currency}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {price.thank_you_url}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  <button
-                    onClick={() => handleEdit(price)}
-                    style={{
-                      marginRight: '10px',
-                      padding: '5px 10px',
-                      backgroundColor: '#0070f3',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(price.id)}
-                    style={{
-                      padding: '5px 10px',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {prices.length === 0 && (
-          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-            No prices found. Add your first price above.
+        <form onSubmit={save} className="stack">
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Product ID</label>
+              <input
+                className="input input-mono"
+                value={form.id}
+                onChange={(e) => setForm({ ...form, id: e.target.value })}
+                placeholder="course-basic"
+                disabled={!!editing}
+                required
+              />
+              <span className="hint">
+                {editing ? 'IDs cannot be changed.' : 'Short unique slug.'}
+              </span>
+            </div>
+
+            <div className="field">
+              <label className="label">Client</label>
+              <select
+                className="select"
+                value={form.client_id}
+                onChange={(e) => setForm({ ...form, client_id: e.target.value })}
+                required
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
-      </div>
-    </div>
+
+          <div className="field">
+            <label className="label">Product name</label>
+            <input
+              className="input"
+              value={form.product_name}
+              onChange={(e) => setForm({ ...form, product_name: e.target.value })}
+              placeholder="Healing Switch Method"
+              required
+            />
+            <span className="hint">Shown to the customer in the payment modal.</span>
+          </div>
+
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Amount</label>
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                min="1"
+                value={form.amount_rupees}
+                onChange={(e) => setForm({ ...form, amount_rupees: e.target.value })}
+                placeholder="1499"
+                required
+              />
+              <span className="hint">In rupees, not paise.</span>
+            </div>
+
+            <div className="field">
+              <label className="label">Currency</label>
+              <select
+                className="select"
+                value={form.currency}
+                onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              >
+                <option value="INR">INR</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="label">Thank-you URL</label>
+            <input
+              className="input"
+              type="url"
+              value={form.thank_you_url}
+              onChange={(e) => setForm({ ...form, thank_you_url: e.target.value })}
+              placeholder="https://lp.example.com/thank-you"
+              required
+            />
+            <span className="hint">Where the customer lands after a successful payment.</span>
+          </div>
+
+          <div className="field">
+            <label className="label">Payment type</label>
+            <select
+              className="select"
+              value={form.payment_type}
+              onChange={(e) => setForm({ ...form, payment_type: e.target.value })}
+            >
+              <option value="one_time">One-time payment</option>
+              <option value="subscription">Subscription (Razorpay only)</option>
+            </select>
+          </div>
+
+          {form.payment_type === 'subscription' && (
+            <>
+              <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                Subscriptions run on Razorpay only, and the client&apos;s Razorpay account must have
+                recurring payments enabled. Card and UPI AutoPay cap each debit at ₹15,000.
+              </div>
+
+              <div className="form-grid">
+                <div className="field">
+                  <label className="label">Billing period</label>
+                  <select
+                    className="select"
+                    value={form.billing_period}
+                    onChange={(e) => setForm({ ...form, billing_period: e.target.value })}
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label className="label">Every</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min="1"
+                    value={form.billing_interval}
+                    onChange={(e) => setForm({ ...form, billing_interval: e.target.value })}
+                  />
+                  <span className="hint">2 + monthly = every 2 months.</span>
+                </div>
+
+                <div className="field">
+                  <label className="label">Total cycles</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min="1"
+                    value={form.total_count}
+                    onChange={(e) => setForm({ ...form, total_count: e.target.value })}
+                    placeholder="12"
+                  />
+                  <span className="hint">How many times to charge.</span>
+                </div>
+              </div>
+
+              {editing?.razorpay_plan_id && (
+                <div className="hint">
+                  Current plan: <span className="mono">{editing.razorpay_plan_id}</span>. Razorpay
+                  plans are immutable — changing the amount or cycle clears this and you&apos;ll
+                  create a new plan.
+                </div>
+              )}
+            </>
+          )}
+        </form>
+      </Modal>
+    </>
   );
 }
-
