@@ -2,14 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import AdminNav from '../components/AdminNav';
 
-// Simple password-based authentication
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-
-export default async function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
   const isAuthenticated = cookieStore.get('admin_auth')?.value === 'true';
 
@@ -18,12 +11,9 @@ export default async function AdminLayout({
   }
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+    <div className="app-shell">
       <AdminNav />
-      <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
-        {children}
-      </div>
+      <div className="page">{children}</div>
     </div>
   );
 }
-

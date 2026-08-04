@@ -1,37 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getAdminSupabase } from '@/lib/supabase/admin';
 import { getPaymentProvider, PaymentProviderError, PaymentGateway } from '@/lib/payment-providers';
 
-// Initialize Supabase client with service role key (server-side only)
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error('Missing Supabase environment variables');
-}
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// CORS headers
+// CORS headers — this endpoint is called cross-origin from GHL funnel pages.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// Handle preflight requests
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-// Main POST handler
 export async function POST(request: NextRequest) {
+  const supabase = getAdminSupabase();
+
   try {
-    // Parse request body
     const body = await request.json();
     const { page_url, name, email, contact } = body;
 
-    // Validate required fields
     if (!page_url || !name || !email || !contact) {
       return NextResponse.json(
         { error: 'missing_fields', detail: 'page_url, name, email, and contact are required' },
@@ -39,11 +27,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse URL to extract hostname and pathname
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(page_url);
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         { error: 'invalid_url', detail: 'page_url must be a valid URL' },
         { status: 400, headers: corsHeaders }
@@ -52,12 +39,10 @@ export async function POST(request: NextRequest) {
 
     const hostname = parsedUrl.hostname;
     const pathname = parsedUrl.pathname;
+    const normalizedPathname =
+      pathname.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
 
-    // Normalize pathname (remove trailing slash for matching)
-    const normalizedPathname = pathname.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
-    
-    // Look up funnel route - try exact match first, then try with/without trailing slash
-    // Select gateway column to determine which payment provider to use
+    // Look up funnel route — exact match, retried with a trailing slash.
     let { data: route, error: routeError } = await supabase
       .from('funnel_routes')
       .select('client_id, price_id, gateway')
@@ -66,7 +51,6 @@ export async function POST(request: NextRequest) {
       .eq('is_active', true)
       .single();
 
-    // If not found, try with trailing slash
     if (routeError || !route) {
       const altPathname = normalizedPathname === '/' ? '/' : normalizedPathname + '/';
       const { data: altRoute, error: altRouteError } = await supabase
@@ -76,7 +60,7 @@ export async function POST(request: NextRequest) {
         .eq('path_prefix', altPathname)
         .eq('is_active', true)
         .single();
-      
+
       if (!altRouteError && altRoute) {
         route = altRoute;
         routeError = null;
@@ -84,21 +68,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (routeError || !route) {
-      console.error('Route lookup error:', routeError);
-      console.error('Looking for:', { hostname, pathname, normalizedPathname });
+      console.error('Route lookup failed:', { hostname, pathname, normalizedPathname });
       return NextResponse.json(
-        { 
-          error: 'route_not_found', 
-          detail: `No active route found for ${hostname}${pathname}. Please check that a funnel route is configured with hostname="${hostname}" and path_prefix="${normalizedPathname}" (or "${normalizedPathname}/") and is_active=true.` 
+        {
+          error: 'route_not_found',
+          detail:
+            `No active route found for ${hostname}${pathname}. Please check that a funnel route ` +
+            `is configured with hostname="${hostname}" and path_prefix="${normalizedPathname}" ` +
+            `(or "${normalizedPathname}/") and is_active=true.`,
         },
         { status: 404, headers: corsHeaders }
       );
     }
 
-    // Determine gateway (default to 'razorpay' for backward compatibility)
     const gateway: PaymentGateway = (route.gateway as PaymentGateway) || 'razorpay';
 
-    // Fetch client credentials (both Razorpay and Cashfree)
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id, razorpay_key_id, razorpay_key_secret, cashfree_app_id, cashfree_secret_key, cashfree_env')
@@ -113,10 +97,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch price (product details)
     const { data: price, error: priceError } = await supabase
       .from('prices')
-      .select('id, product_name, amount_paise, currency, thank_you_url')
+      // Kept on one line: supabase-js infers row types from this string literal,
+      // and concatenation defeats that inference.
+      .select('id, product_name, amount_paise, currency, thank_you_url, payment_type, razorpay_plan_id, billing_period, billing_interval, total_count')
       .eq('id', route.price_id)
       .single();
 
@@ -128,26 +113,74 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the appropriate payment provider
     const paymentProvider = getPaymentProvider(gateway);
 
-    // Create order using the provider
     try {
       const orderResponse = await paymentProvider.createOrder({
         client,
         price,
-        customer: {
-          name,
-          email,
-          contact,
-        },
+        customer: { name, email, contact },
       });
 
-      // Return standardized response
+      // ---------------------------------------------------------------------
+      // Persist. This is best-effort: a logging failure must never block a
+      // customer from paying, so we warn rather than throw.
+      // ---------------------------------------------------------------------
+      const isSubscription = orderResponse.payment_type === 'subscription';
+
+      const { error: txError } = await supabase.from('transactions').insert({
+        client_id: client.id,
+        price_id: price.id,
+        gateway,
+        payment_type: orderResponse.payment_type,
+        gateway_order_id: isSubscription ? null : orderResponse.order_id,
+        gateway_subscription_id: orderResponse.subscription_id ?? null,
+        status: 'created',
+        amount_paise: price.amount_paise,
+        currency: price.currency,
+        customer_name: name,
+        customer_email: email,
+        customer_contact: contact,
+        product_name: price.product_name,
+        page_url,
+      });
+
+      if (txError) {
+        console.error('Failed to record transaction (payment continues):', txError);
+      }
+
+      if (isSubscription && orderResponse.subscription_id) {
+        const { error: subError } = await supabase.from('subscriptions').upsert(
+          {
+            client_id: client.id,
+            price_id: price.id,
+            gateway,
+            gateway_subscription_id: orderResponse.subscription_id,
+            gateway_plan_id: price.razorpay_plan_id ?? null,
+            status: 'created',
+            customer_name: name,
+            customer_email: email,
+            customer_contact: contact,
+            product_name: price.product_name,
+            charge_amount_paise: price.amount_paise,
+            currency: price.currency,
+            total_count: price.total_count ?? null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'gateway,gateway_subscription_id' }
+        );
+
+        if (subError) {
+          console.error('Failed to record subscription (payment continues):', subError);
+        }
+      }
+
       return NextResponse.json(
         {
           gateway: orderResponse.gateway,
+          payment_type: orderResponse.payment_type,
           order_id: orderResponse.order_id,
+          subscription_id: orderResponse.subscription_id,
           checkout_data: orderResponse.checkout_data,
           product_name: orderResponse.product_name,
           thank_you_url: orderResponse.thank_you_url,
@@ -156,9 +189,32 @@ export async function POST(request: NextRequest) {
         { headers: corsHeaders }
       );
     } catch (error: any) {
-      // Handle payment provider errors
       if (error instanceof PaymentProviderError) {
         console.error(`${error.gateway} API error:`, error.details);
+
+        // Record the failed attempt so misconfiguration is visible in the admin
+        // panel rather than only in server logs.
+        await supabase
+          .from('transactions')
+          .insert({
+            client_id: client.id,
+            price_id: price.id,
+            gateway,
+            payment_type: price.payment_type || 'one_time',
+            status: 'failed',
+            amount_paise: price.amount_paise,
+            currency: price.currency,
+            customer_name: name,
+            customer_email: email,
+            customer_contact: contact,
+            product_name: price.product_name,
+            page_url,
+            error_message: error.message,
+          })
+          .then(({ error: e }) => {
+            if (e) console.error('Failed to record failed transaction:', e);
+          });
+
         return NextResponse.json(
           {
             error: 'order_create_failed',
@@ -169,18 +225,13 @@ export async function POST(request: NextRequest) {
           { status: error.status || 500, headers: corsHeaders }
         );
       }
-      // Re-throw to be caught by outer catch block
       throw error;
     }
   } catch (error: any) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      {
-        error: 'unexpected_error',
-        detail: error.message || 'An unexpected error occurred',
-      },
+      { error: 'unexpected_error', detail: error.message || 'An unexpected error occurred' },
       { status: 500, headers: corsHeaders }
     );
   }
 }
-

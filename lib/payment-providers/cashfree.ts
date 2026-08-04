@@ -14,6 +14,18 @@ export class CashfreeProvider implements PaymentProvider {
   async createOrder(params: PaymentProviderParams): Promise<PaymentProviderResponse> {
     const { client, price, customer } = params;
 
+    // Recurring is Razorpay-only in this gateway. Fail loudly rather than
+    // silently charging a subscription price as a single payment.
+    if (price.payment_type === 'subscription') {
+      throw new PaymentProviderError(
+        'cashfree',
+        400,
+        { error: 'unsupported_payment_type' },
+        'Subscriptions are not supported on Cashfree in this gateway. ' +
+          'Switch this funnel route to Razorpay, or set the price back to one-time.'
+      );
+    }
+
     // Validate Cashfree credentials
     if (!client.cashfree_app_id || !client.cashfree_secret_key) {
       throw new PaymentProviderError(
@@ -87,6 +99,7 @@ export class CashfreeProvider implements PaymentProvider {
     // Return standardized response
     return {
       gateway: 'cashfree',
+      payment_type: 'one_time',
       order_id: cashfreeData.order_id || orderId,
       checkout_data: {
         payment_session_id: cashfreeData.payment_session_id,

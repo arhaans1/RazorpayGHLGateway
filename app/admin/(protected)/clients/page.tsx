@@ -1,398 +1,399 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { useEffect, useState } from 'react';
+import { adminFetch, Modal, Spinner, EmptyState, formatDate } from '../../components/ui';
 
 interface Client {
   id: string;
   name: string;
-  razorpay_key_id: string;
-  razorpay_key_secret: string;
+  razorpay_key_id?: string;
   cashfree_app_id?: string;
-  cashfree_secret_key?: string;
   cashfree_env?: 'sandbox' | 'production';
   created_at: string;
+  has_razorpay_key_secret: boolean;
+  has_cashfree_secret_key: boolean;
+  has_razorpay_webhook_secret: boolean;
+  has_cashfree_webhook_secret: boolean;
 }
+
+/** Sent when a secret field is left untouched; the server ignores it. */
+const MASK = '********';
+
+const BLANK = {
+  id: '',
+  name: '',
+  razorpay_key_id: '',
+  razorpay_key_secret: '',
+  razorpay_webhook_secret: '',
+  cashfree_app_id: '',
+  cashfree_secret_key: '',
+  cashfree_webhook_secret: '',
+  cashfree_env: 'production',
+};
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [formData, setFormData] = useState({
-    id: '',
-    name: '',
-    razorpay_key_id: '',
-    razorpay_key_secret: '',
-    cashfree_app_id: '',
-    cashfree_secret_key: '',
-    cashfree_env: 'production' as 'sandbox' | 'production',
-  });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Client | null>(null);
+  const [form, setForm] = useState({ ...BLANK });
+  const [saving, setSaving] = useState(false);
+  const [origin, setOrigin] = useState('');
 
   useEffect(() => {
-    fetchClients();
+    setOrigin(window.location.origin);
+    load();
   }, []);
 
-  const fetchClients = async () => {
+  async function load() {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setClients(data || []);
-    } catch (error: any) {
-      console.error('Error fetching clients:', error);
-      alert('Error loading clients: ' + error.message);
+      const data = await adminFetch<{ clients: Client[] }>('/api/admin/clients');
+      setClients(data.clients);
+      setError('');
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      if (editingClient) {
-        // Update existing client
-        const { error } = await supabase
-          .from('clients')
-        .update({
-          name: formData.name,
-          razorpay_key_id: formData.razorpay_key_id,
-          razorpay_key_secret: formData.razorpay_key_secret,
-          cashfree_app_id: formData.cashfree_app_id || null,
-          cashfree_secret_key: formData.cashfree_secret_key || null,
-          cashfree_env: formData.cashfree_env,
-        })
-          .eq('id', editingClient.id);
-
-        if (error) throw error;
-      } else {
-        // Create new client
-        const { error } = await supabase.from('clients').insert([formData]);
-        if (error) throw error;
-      }
-
-      setShowForm(false);
-      setEditingClient(null);
-      setFormData({ 
-        id: '', 
-        name: '', 
-        razorpay_key_id: '', 
-        razorpay_key_secret: '',
-        cashfree_app_id: '',
-        cashfree_secret_key: '',
-        cashfree_env: 'production',
-      });
-      fetchClients();
-    } catch (error: any) {
-      console.error('Error saving client:', error);
-      alert('Error saving client: ' + error.message);
-    }
-  };
-
-  const handleEdit = (client: Client) => {
-    setEditingClient(client);
-    setFormData({
-      id: client.id,
-      name: client.name,
-      razorpay_key_id: client.razorpay_key_id,
-      razorpay_key_secret: client.razorpay_key_secret,
-      cashfree_app_id: client.cashfree_app_id || '',
-      cashfree_secret_key: client.cashfree_secret_key || '',
-      cashfree_env: client.cashfree_env || 'production',
-    });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this client?')) return;
-
-    try {
-      const { error } = await supabase.from('clients').delete().eq('id', id);
-      if (error) throw error;
-      fetchClients();
-    } catch (error: any) {
-      console.error('Error deleting client:', error);
-      alert('Error deleting client: ' + error.message);
-    }
-  };
-
-  const maskKey = (key: string) => {
-    if (!key || key.length < 8) return key;
-    return key.substring(0, 4) + '****' + key.substring(key.length - 4);
-  };
-
-  if (loading) {
-    return <div>Loading...</div>;
   }
 
+  function openCreate() {
+    setEditing(null);
+    setForm({ ...BLANK });
+    setModalOpen(true);
+  }
+
+  function openEdit(client: Client) {
+    setEditing(client);
+    setForm({
+      id: client.id,
+      name: client.name,
+      razorpay_key_id: client.razorpay_key_id || '',
+      // Secrets are never sent to the browser. Show a mask so the operator can
+      // tell one is set, and only overwrite if they type something new.
+      razorpay_key_secret: client.has_razorpay_key_secret ? MASK : '',
+      razorpay_webhook_secret: client.has_razorpay_webhook_secret ? MASK : '',
+      cashfree_app_id: client.cashfree_app_id || '',
+      cashfree_secret_key: client.has_cashfree_secret_key ? MASK : '',
+      cashfree_webhook_secret: client.has_cashfree_webhook_secret ? MASK : '',
+      cashfree_env: client.cashfree_env || 'production',
+    });
+    setModalOpen(true);
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    // Blank optional text fields should clear the column, not store "".
+    const payload: any = {
+      ...form,
+      id: form.id.trim(),
+      name: form.name.trim(),
+      razorpay_key_id: form.razorpay_key_id.trim() || null,
+      cashfree_app_id: form.cashfree_app_id.trim() || null,
+    };
+
+    try {
+      await adminFetch('/api/admin/clients', {
+        method: editing ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      setModalOpen(false);
+      await load();
+      setNotice(editing ? 'Client updated.' : 'Client created.');
+      setTimeout(() => setNotice(''), 3000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(client: Client) {
+    if (
+      !confirm(
+        `Delete "${client.name}"? This also deletes their products, routes and transaction history.`
+      )
+    )
+      return;
+
+    try {
+      await adminFetch(`/api/admin/clients?id=${encodeURIComponent(client.id)}`, {
+        method: 'DELETE',
+      });
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  function copy(text: string) {
+    navigator.clipboard.writeText(text);
+    setNotice('Copied to clipboard.');
+    setTimeout(() => setNotice(''), 2000);
+  }
+
+  if (loading) return <Spinner />;
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>Clients</h1>
-        <button
-          onClick={() => {
-            setShowForm(!showForm);
-            setEditingClient(null);
-            setFormData({ 
-              id: '', 
-              name: '', 
-              razorpay_key_id: '', 
-              razorpay_key_secret: '',
-              cashfree_app_id: '',
-              cashfree_secret_key: '',
-              cashfree_env: 'production',
-            });
-          }}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#0070f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          {showForm ? 'Cancel' : 'Add Client'}
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Clients</h1>
+          <p className="page-subtitle">
+            Each client uses their own payment gateway account and credentials.
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={openCreate}>
+          + Add client
         </button>
       </div>
 
-      {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            backgroundColor: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          }}
-        >
-          <h2>{editingClient ? 'Edit Client' : 'Add New Client'}</h2>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              ID (unique identifier)
-            </label>
-            <input
-              type="text"
-              value={formData.id}
-              onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-              required
-              disabled={!!editingClient}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Name
-            </label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Razorpay Key ID
-            </label>
-            <input
-              type="text"
-              value={formData.razorpay_key_id}
-              onChange={(e) => setFormData({ ...formData, razorpay_key_id: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Razorpay Key Secret
-            </label>
-            <input
-              type="password"
-              value={formData.razorpay_key_secret}
-              onChange={(e) => setFormData({ ...formData, razorpay_key_secret: e.target.value })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
+      {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
 
-          <div style={{ marginTop: '30px', marginBottom: '15px', paddingTop: '20px', borderTop: '2px solid #ddd' }}>
-            <h3 style={{ marginBottom: '15px' }}>Cashfree (Optional)</h3>
-            <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
-              Optional: Add Cashfree credentials if you want to use Cashfree payment gateway for some routes.
-            </p>
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Cashfree App ID
-            </label>
-            <input
-              type="text"
-              value={formData.cashfree_app_id}
-              onChange={(e) => setFormData({ ...formData, cashfree_app_id: e.target.value })}
-              placeholder="Optional - Leave empty if not using Cashfree"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Cashfree Secret Key
-            </label>
-            <input
-              type="password"
-              value={formData.cashfree_secret_key}
-              onChange={(e) => setFormData({ ...formData, cashfree_secret_key: e.target.value })}
-              placeholder="Optional - Leave empty if not using Cashfree"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Cashfree Environment
-            </label>
-            <select
-              value={formData.cashfree_env}
-              onChange={(e) => setFormData({ ...formData, cashfree_env: e.target.value as 'sandbox' | 'production' })}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            >
-              <option value="production">Production</option>
-              <option value="sandbox">Sandbox (Testing)</option>
-            </select>
-          </div>
-
-          <button
-            type="submit"
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#0070f3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            {editingClient ? 'Update Client' : 'Create Client'}
-          </button>
-        </form>
-      )}
-
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        }}
-      >
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f5f5f5' }}>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>ID</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Name</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Key ID (masked)</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Created</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map((client) => (
-              <tr key={client.id}>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{client.id}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{client.name}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {maskKey(client.razorpay_key_id)}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {new Date(client.created_at).toLocaleDateString()}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  <button
-                    onClick={() => handleEdit(client)}
-                    style={{
-                      marginRight: '10px',
-                      padding: '5px 10px',
-                      backgroundColor: '#0070f3',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
+      {clients.length === 0 ? (
+        <div className="card">
+          <EmptyState title="No clients yet" hint="Add your first client to get started." />
+        </div>
+      ) : (
+        <div className="stack">
+          {clients.map((client) => (
+            <div className="card" key={client.id}>
+              <div className="card-head">
+                <div>
+                  <div className="card-title">{client.name}</div>
+                  <div className="group-id">{client.id}</div>
+                </div>
+                <div className="row">
+                  <button className="btn btn-ghost btn-sm" onClick={() => openEdit(client)}>
                     Edit
                   </button>
-                  <button
-                    onClick={() => handleDelete(client.id)}
-                    style={{
-                      padding: '5px 10px',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
+                  <button className="btn btn-danger btn-sm" onClick={() => remove(client)}>
                     Delete
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {clients.length === 0 && (
-          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-            No clients found. Add your first client above.
+                </div>
+              </div>
+
+              <div className="card-pad">
+                <div className="form-grid">
+                  <div>
+                    <div className="stat-label">Razorpay</div>
+                    <div style={{ marginTop: 6 }}>
+                      {client.razorpay_key_id ? (
+                        <>
+                          <span className="mono">{client.razorpay_key_id}</span>{' '}
+                          {client.has_razorpay_key_secret ? (
+                            <span className="badge badge-green">Secret set</span>
+                          ) : (
+                            <span className="badge badge-red">No secret</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="badge badge-gray">Not configured</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="stat-label">Cashfree</div>
+                    <div style={{ marginTop: 6 }}>
+                      {client.cashfree_app_id ? (
+                        <>
+                          <span className="mono">{client.cashfree_app_id}</span>{' '}
+                          <span className="badge badge-gray">{client.cashfree_env}</span>
+                        </>
+                      ) : (
+                        <span className="badge badge-gray">Not configured</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="stat-label">Added</div>
+                    <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                      {formatDate(client.created_at)}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div className="stat-label" style={{ marginBottom: 8 }}>
+                    Webhook URLs — paste into this client&apos;s gateway dashboard
+                  </div>
+
+                  {[
+                    {
+                      label: 'Razorpay',
+                      url: `${origin}/api/webhooks/razorpay/${client.id}`,
+                      ok: client.has_razorpay_webhook_secret,
+                      note: 'Needs a webhook secret saved here and in Razorpay.',
+                    },
+                    {
+                      label: 'Cashfree',
+                      url: `${origin}/api/webhooks/cashfree/${client.id}`,
+                      ok: client.has_cashfree_secret_key || client.has_cashfree_webhook_secret,
+                      note: 'Uses the Cashfree secret key unless a webhook secret is set.',
+                    },
+                  ].map((hook) => (
+                    <div className="row" key={hook.label} style={{ marginBottom: 8 }}>
+                      <span className="badge badge-gray" style={{ minWidth: 74 }}>
+                        {hook.label}
+                      </span>
+                      <code
+                        className="mono truncate"
+                        style={{ maxWidth: 420, color: 'var(--text-muted)' }}
+                        title={hook.url}
+                      >
+                        {hook.url}
+                      </code>
+                      <button className="btn btn-ghost btn-sm" onClick={() => copy(hook.url)}>
+                        Copy
+                      </button>
+                      {hook.ok ? (
+                        <span className="badge badge-green">Ready</span>
+                      ) : (
+                        <span className="badge badge-amber" title={hook.note}>
+                          Secret missing
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={modalOpen}
+        title={editing ? `Edit ${editing.name}` : 'New client'}
+        onClose={() => setModalOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setModalOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create client'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={save} className="stack">
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Client ID</label>
+              <input
+                className="input input-mono"
+                value={form.id}
+                onChange={(e) => setForm({ ...form, id: e.target.value })}
+                placeholder="acme-coaching"
+                disabled={!!editing}
+                required
+              />
+            </div>
+            <div className="field">
+              <label className="label">Display name</label>
+              <input
+                className="input"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Acme Coaching"
+                required
+              />
+            </div>
           </div>
-        )}
-      </div>
-    </div>
+
+          <div className="section-title" style={{ marginTop: 6, marginBottom: 0 }}>
+            Razorpay
+          </div>
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Key ID</label>
+              <input
+                className="input input-mono"
+                value={form.razorpay_key_id}
+                onChange={(e) => setForm({ ...form, razorpay_key_id: e.target.value })}
+                placeholder="rzp_live_..."
+              />
+            </div>
+            <div className="field">
+              <label className="label">Key secret</label>
+              <input
+                className="input input-mono"
+                type="password"
+                value={form.razorpay_key_secret}
+                onChange={(e) => setForm({ ...form, razorpay_key_secret: e.target.value })}
+                placeholder="Key secret"
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label className="label">Webhook secret</label>
+            <input
+              className="input input-mono"
+              type="password"
+              value={form.razorpay_webhook_secret}
+              onChange={(e) => setForm({ ...form, razorpay_webhook_secret: e.target.value })}
+              placeholder="Any random string"
+            />
+            <span className="hint">
+              Must match the secret set on the webhook in the client&apos;s Razorpay dashboard.
+              Without it, payment confirmations are rejected.
+            </span>
+          </div>
+
+          <div className="section-title" style={{ marginTop: 6, marginBottom: 0 }}>
+            Cashfree
+          </div>
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">App ID</label>
+              <input
+                className="input input-mono"
+                value={form.cashfree_app_id}
+                onChange={(e) => setForm({ ...form, cashfree_app_id: e.target.value })}
+                placeholder="Cashfree App ID"
+              />
+            </div>
+            <div className="field">
+              <label className="label">Secret key</label>
+              <input
+                className="input input-mono"
+                type="password"
+                value={form.cashfree_secret_key}
+                onChange={(e) => setForm({ ...form, cashfree_secret_key: e.target.value })}
+                placeholder="Cashfree secret key"
+              />
+            </div>
+            <div className="field">
+              <label className="label">Environment</label>
+              <select
+                className="select"
+                value={form.cashfree_env}
+                onChange={(e) => setForm({ ...form, cashfree_env: e.target.value })}
+              >
+                <option value="production">Production</option>
+                <option value="sandbox">Sandbox</option>
+              </select>
+            </div>
+          </div>
+
+          {editing && (
+            <div className="hint">
+              Secret fields show <span className="mono">{MASK}</span> when already saved. Leave them
+              as-is to keep the current value.
+            </div>
+          )}
+        </form>
+      </Modal>
+    </>
   );
 }
-

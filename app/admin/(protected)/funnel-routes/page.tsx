@@ -1,12 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  adminFetch,
+  formatAmount,
+  Modal,
+  Spinner,
+  EmptyState,
+  GatewayBadge,
+  TypeBadge,
+} from '../../components/ui';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+interface Client {
+  id: string;
+  name: string;
+}
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+interface Price {
+  id: string;
+  client_id: string;
+  product_name: string;
+  amount_paise: number;
+  currency: string;
+  payment_type: string;
+}
 
 interface FunnelRoute {
   id: number;
@@ -19,130 +36,86 @@ interface FunnelRoute {
   created_at: string;
 }
 
-interface Client {
-  id: string;
-  name: string;
-}
+const BLANK = {
+  hostname: '',
+  path_prefix: '/checkout',
+  client_id: '',
+  price_id: '',
+  gateway: 'razorpay',
+  is_active: true,
+};
 
-interface Price {
-  id: string;
-  product_name: string;
-  client_id: string;
-}
-
-export default function FunnelRoutesPage() {
-  const [routes, setRoutes] = useState<FunnelRoute[]>([]);
+export default function RoutesPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [prices, setPrices] = useState<Price[]>([]);
-  const [filteredPrices, setFilteredPrices] = useState<Price[]>([]);
+  const [routes, setRoutes] = useState<FunnelRoute[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingRoute, setEditingRoute] = useState<FunnelRoute | null>(null);
-  const [formData, setFormData] = useState({
-    hostname: '',
-    path_prefix: '',
-    client_id: '',
-    price_id: '',
-    gateway: 'razorpay' as 'razorpay' | 'cashfree',
-    is_active: true,
-  });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<FunnelRoute | null>(null);
+  const [form, setForm] = useState({ ...BLANK });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchClients();
-    fetchPrices();
-    fetchRoutes();
+    load();
   }, []);
 
-  useEffect(() => {
-    // Filter prices when client changes
-    if (formData.client_id) {
-      setFilteredPrices(prices.filter((p) => p.client_id === formData.client_id));
-    } else {
-      setFilteredPrices([]);
-    }
-  }, [formData.client_id, prices]);
-
-  const fetchClients = async () => {
+  async function load() {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('id, name')
-        .order('name');
-
-      if (error) throw error;
-      setClients(data || []);
-    } catch (error: any) {
-      console.error('Error fetching clients:', error);
-    }
-  };
-
-  const fetchPrices = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('prices')
-        .select('id, product_name, client_id')
-        .order('product_name');
-
-      if (error) throw error;
-      setPrices(data || []);
-    } catch (error: any) {
-      console.error('Error fetching prices:', error);
-    }
-  };
-
-  const fetchRoutes = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('funnel_routes')
-        .select('id, hostname, path_prefix, client_id, price_id, gateway, is_active, created_at')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setRoutes(data || []);
-    } catch (error: any) {
-      console.error('Error fetching routes:', error);
-      alert('Error loading routes: ' + error.message);
+      const [c, p, r] = await Promise.all([
+        adminFetch<{ clients: Client[] }>('/api/admin/clients'),
+        adminFetch<{ prices: Price[] }>('/api/admin/prices'),
+        adminFetch<{ routes: FunnelRoute[] }>('/api/admin/funnel-routes'),
+      ]);
+      setClients(c.clients);
+      setPrices(p.prices);
+      setRoutes(r.routes);
+      setExpanded(new Set(c.clients.map((x) => x.id)));
+      setError('');
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      if (editingRoute) {
-        const { error } = await supabase
-          .from('funnel_routes')
-          .update(formData)
-          .eq('id', editingRoute.id);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('funnel_routes').insert([formData]);
-        if (error) throw error;
-      }
-
-      setShowForm(false);
-      setEditingRoute(null);
-      setFormData({
-        hostname: '',
-        path_prefix: '',
-        client_id: '',
-        price_id: '',
-        gateway: 'razorpay',
-        is_active: true,
-      });
-      setFilteredPrices([]);
-      fetchRoutes();
-    } catch (error: any) {
-      console.error('Error saving route:', error);
-      alert('Error saving route: ' + error.message);
+  const grouped = useMemo(() => {
+    const map = new Map<string, FunnelRoute[]>();
+    for (const client of clients) map.set(client.id, []);
+    for (const route of routes) {
+      if (!map.has(route.client_id)) map.set(route.client_id, []);
+      map.get(route.client_id)!.push(route);
     }
-  };
+    return map;
+  }, [clients, routes]);
 
-  const handleEdit = (route: FunnelRoute) => {
-    setEditingRoute(route);
-    setFormData({
+  /** Only the selected client's products can be attached to their route. */
+  const pricesForClient = (clientId: string) => prices.filter((p) => p.client_id === clientId);
+
+  const priceOf = (id: string) => prices.find((p) => p.id === id);
+
+  function toggle(clientId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }
+
+  function openCreate(clientId?: string) {
+    setEditing(null);
+    setForm({ ...BLANK, client_id: clientId || clients[0]?.id || '' });
+    setModalOpen(true);
+  }
+
+  function openEdit(route: FunnelRoute) {
+    setEditing(route);
+    setForm({
       hostname: route.hostname,
       path_prefix: route.path_prefix,
       client_id: route.client_id,
@@ -150,337 +123,335 @@ export default function FunnelRoutesPage() {
       gateway: route.gateway || 'razorpay',
       is_active: route.is_active,
     });
-    setShowForm(true);
-  };
-
-  const handleToggleActive = async (route: FunnelRoute) => {
-    try {
-      const { error } = await supabase
-        .from('funnel_routes')
-        .update({ is_active: !route.is_active })
-        .eq('id', route.id);
-
-      if (error) throw error;
-      fetchRoutes();
-    } catch (error: any) {
-      console.error('Error toggling route:', error);
-      alert('Error updating route: ' + error.message);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this route?')) return;
-
-    try {
-      const { error } = await supabase.from('funnel_routes').delete().eq('id', id);
-      if (error) throw error;
-      fetchRoutes();
-    } catch (error: any) {
-      console.error('Error deleting route:', error);
-      alert('Error deleting route: ' + error.message);
-    }
-  };
-
-  if (loading) {
-    return <div>Loading...</div>;
+    setModalOpen(true);
   }
 
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    try {
+      const payload: any = { ...form };
+      if (editing) payload.id = editing.id;
+
+      await adminFetch('/api/admin/funnel-routes', {
+        method: editing ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      setModalOpen(false);
+      await load();
+      setNotice(editing ? 'Route updated.' : 'Route created.');
+      setTimeout(() => setNotice(''), 3000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleActive(route: FunnelRoute) {
+    try {
+      await adminFetch('/api/admin/funnel-routes', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: route.id, is_active: !route.is_active }),
+      });
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function remove(route: FunnelRoute) {
+    if (!confirm(`Delete the route for ${route.hostname}${route.path_prefix}?`)) return;
+
+    try {
+      await adminFetch(`/api/admin/funnel-routes?id=${route.id}`, { method: 'DELETE' });
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  const selectablePrices = pricesForClient(form.client_id);
+
+  if (loading) return <Spinner />;
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>Funnel Routes</h1>
-        <button
-          onClick={() => {
-            setShowForm(!showForm);
-            setEditingRoute(null);
-            setFormData({
-              hostname: '',
-              path_prefix: '',
-              client_id: '',
-              price_id: '',
-              gateway: 'razorpay',
-              is_active: true,
-            });
-            setFilteredPrices([]);
-          }}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#0070f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          {showForm ? 'Cancel' : 'Add Route'}
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Funnel routes</h1>
+          <p className="page-subtitle">
+            Maps a checkout page URL to the client, product and gateway that should handle it.
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={() => openCreate()} disabled={!clients.length}>
+          + Add route
         </button>
       </div>
 
-      {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            backgroundColor: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          }}
-        >
-          <h2>{editingRoute ? 'Edit Route' : 'Add New Route'}</h2>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Hostname (e.g., launchwithai.in)
-            </label>
-            <input
-              type="text"
-              value={formData.hostname}
-              onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
-              required
-              placeholder="launchwithai.in"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
+      {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
+
+      {clients.length === 0 ? (
+        <div className="card">
+          <EmptyState title="No clients yet" hint="Add a client and a product first." />
+        </div>
+      ) : (
+        <div className="stack">
+          {clients.map((client) => {
+            const items = grouped.get(client.id) ?? [];
+            const isOpen = expanded.has(client.id);
+
+            return (
+              <div className="group" key={client.id}>
+                <button
+                  className={`group-head ${isOpen ? 'open' : ''}`}
+                  onClick={() => toggle(client.id)}
+                >
+                  <span className={`group-chevron ${isOpen ? 'open' : ''}`}>▶</span>
+                  <span className="group-name">{client.name}</span>
+                  <span className="group-id">{client.id}</span>
+                  <span className="spacer" />
+                  <span className="badge badge-gray">
+                    {items.length} {items.length === 1 ? 'route' : 'routes'}
+                  </span>
+                  <span
+                    className="btn btn-ghost btn-sm"
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openCreate(client.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        openCreate(client.id);
+                      }
+                    }}
+                  >
+                    + Add
+                  </span>
+                </button>
+
+                {isOpen && (
+                  <div className="group-body">
+                    {items.length === 0 ? (
+                      <EmptyState title="No routes for this client yet" />
+                    ) : (
+                      <div className="table-wrap">
+                        <table className="data fixed">
+                          {/* Actions needs the widest share — it holds three
+                              buttons and gets clipped below ~22%. */}
+                          <colgroup>
+                            <col style={{ width: '25%' }} />
+                            <col style={{ width: '21%' }} />
+                            <col style={{ width: '10%' }} />
+                            <col style={{ width: '10%' }} />
+                            <col style={{ width: '9%' }} />
+                            <col style={{ width: '25%' }} />
+                          </colgroup>
+                          <thead>
+                            <tr>
+                              <th>Checkout URL</th>
+                              <th>Product</th>
+                              <th>Amount</th>
+                              <th>Gateway</th>
+                              <th>Status</th>
+                              <th style={{ textAlign: 'right' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((route) => {
+                              const price = priceOf(route.price_id);
+                              return (
+                                <tr key={route.id}>
+                                  <td className="mono">
+                                    {route.hostname}
+                                    <span style={{ color: 'var(--blue)' }}>
+                                      {route.path_prefix}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {price ? (
+                                      <>
+                                        <div>{price.product_name}</div>
+                                        <div style={{ marginTop: 3 }}>
+                                          <TypeBadge paymentType={price.payment_type} />
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <span className="badge badge-red">Missing product</span>
+                                    )}
+                                  </td>
+                                  <td className="num">
+                                    {price ? formatAmount(price.amount_paise, price.currency) : '—'}
+                                  </td>
+                                  <td>
+                                    <GatewayBadge gateway={route.gateway} />
+                                  </td>
+                                  <td>
+                                    {route.is_active ? (
+                                      <span className="badge badge-green">Active</span>
+                                    ) : (
+                                      <span className="badge badge-gray">Paused</span>
+                                    )}
+                                  </td>
+                                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                    <button
+                                      className="btn btn-ghost btn-sm"
+                                      onClick={() => toggleActive(route)}
+                                    >
+                                      {route.is_active ? 'Pause' : 'Activate'}
+                                    </button>
+                                    <button
+                                      className="btn btn-ghost btn-sm"
+                                      onClick={() => openEdit(route)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="btn btn-danger btn-sm"
+                                      onClick={() => remove(route)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal
+        open={modalOpen}
+        title={editing ? 'Edit route' : 'New route'}
+        onClose={() => setModalOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setModalOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create route'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={save} className="stack">
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Hostname</label>
+              <input
+                className="input input-mono"
+                value={form.hostname}
+                onChange={(e) => setForm({ ...form, hostname: e.target.value })}
+                placeholder="lp.example.com"
+                required
+              />
+              <span className="hint">Domain only — no https://</span>
+            </div>
+
+            <div className="field">
+              <label className="label">Path</label>
+              <input
+                className="input input-mono"
+                value={form.path_prefix}
+                onChange={(e) => setForm({ ...form, path_prefix: e.target.value })}
+                placeholder="/checkout"
+                required
+              />
+              <span className="hint">Must match the checkout page path exactly.</span>
+            </div>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Path Prefix (e.g., /checkout or /bootcamp/checkout)
-            </label>
-            <input
-              type="text"
-              value={formData.path_prefix}
-              onChange={(e) => setFormData({ ...formData, path_prefix: e.target.value })}
-              required
-              placeholder="/checkout"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Client
-            </label>
-            <select
-              value={formData.client_id}
-              onChange={(e) => setFormData({ ...formData, client_id: e.target.value, price_id: '' })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            >
-              <option value="">Select a client</option>
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
+
+          <div className="form-grid">
+            <div className="field">
+              <label className="label">Client</label>
+              <select
+                className="select"
+                value={form.client_id}
+                onChange={(e) =>
+                  // Products belong to a client, so switching client invalidates
+                  // any product already picked.
+                  setForm({ ...form, client_id: e.target.value, price_id: '' })
+                }
+                required
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label className="label">Product</label>
+              <select
+                className="select"
+                value={form.price_id}
+                onChange={(e) => setForm({ ...form, price_id: e.target.value })}
+                disabled={!form.client_id}
+                required
+              >
+                <option value="">
+                  {form.client_id ? 'Select a product…' : 'Pick a client first'}
                 </option>
-              ))}
-            </select>
+                {selectablePrices.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.product_name} — {formatAmount(p.amount_paise, p.currency)}
+                  </option>
+                ))}
+              </select>
+              {form.client_id && selectablePrices.length === 0 && (
+                <span className="hint" style={{ color: 'var(--red)' }}>
+                  This client has no products yet.
+                </span>
+              )}
+            </div>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Price
-            </label>
+
+          <div className="field">
+            <label className="label">Payment gateway</label>
             <select
-              value={formData.price_id}
-              onChange={(e) => setFormData({ ...formData, price_id: e.target.value })}
-              required
-              disabled={!formData.client_id || filteredPrices.length === 0}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
-            >
-              <option value="">
-                {!formData.client_id
-                  ? 'Select a client first'
-                  : filteredPrices.length === 0
-                  ? 'No prices for this client'
-                  : 'Select a price'}
-              </option>
-              {filteredPrices.map((price) => (
-                <option key={price.id} value={price.id}>
-                  {price.product_name} ({price.id})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Payment Gateway
-            </label>
-            <select
-              value={formData.gateway}
-              onChange={(e) => setFormData({ ...formData, gateway: e.target.value as 'razorpay' | 'cashfree' })}
-              required
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-              }}
+              className="select"
+              value={form.gateway}
+              onChange={(e) => setForm({ ...form, gateway: e.target.value })}
             >
               <option value="razorpay">Razorpay</option>
               <option value="cashfree">Cashfree</option>
             </select>
-            <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-              Note: Ensure the selected client has credentials configured for the chosen gateway.
-            </p>
+            <span className="hint">
+              The client must have credentials saved for the gateway you choose. Subscription
+              products require Razorpay.
+            </span>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <input
-                type="checkbox"
-                checked={formData.is_active}
-                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-              />
-              <span style={{ fontWeight: 'bold' }}>Active</span>
-            </label>
-          </div>
-          <button
-            type="submit"
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#0070f3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            {editingRoute ? 'Update Route' : 'Create Route'}
-          </button>
-        </form>
-      )}
 
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        }}
-      >
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f5f5f5' }}>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Hostname</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Path</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Client</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Price</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Gateway</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Status</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Created</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {routes.map((route) => (
-              <tr key={route.id}>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.hostname}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>{route.path_prefix}</td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {clients.find((c) => c.id === route.client_id)?.name || route.client_id}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {prices.find((p) => p.id === route.price_id)?.product_name || route.price_id}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  <span
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      backgroundColor: (route.gateway || 'razorpay') === 'cashfree' ? '#e7f3ff' : '#fff4e6',
-                      color: (route.gateway || 'razorpay') === 'cashfree' ? '#0066cc' : '#cc6600',
-                      fontWeight: 'bold',
-                      textTransform: 'uppercase',
-                      fontSize: '12px',
-                    }}
-                  >
-                    {route.gateway || 'razorpay'}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  <span
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      backgroundColor: route.is_active ? '#d4edda' : '#f8d7da',
-                      color: route.is_active ? '#155724' : '#721c24',
-                    }}
-                  >
-                    {route.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  {new Date(route.created_at).toLocaleDateString()}
-                </td>
-                <td style={{ padding: '12px', borderBottom: '1px solid #ddd' }}>
-                  <button
-                    onClick={() => handleEdit(route)}
-                    style={{
-                      marginRight: '10px',
-                      padding: '5px 10px',
-                      backgroundColor: '#0070f3',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleToggleActive(route)}
-                    style={{
-                      marginRight: '10px',
-                      padding: '5px 10px',
-                      backgroundColor: route.is_active ? '#ffc107' : '#28a745',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {route.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(route.id)}
-                    style={{
-                      padding: '5px 10px',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {routes.length === 0 && (
-          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-            No routes found. Add your first route above.
-          </div>
-        )}
-      </div>
-    </div>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+            />
+            Active — accept payments on this URL
+          </label>
+        </form>
+      </Modal>
+    </>
   );
 }
-

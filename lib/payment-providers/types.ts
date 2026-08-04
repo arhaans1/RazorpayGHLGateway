@@ -5,6 +5,14 @@
 
 export type PaymentGateway = 'razorpay' | 'cashfree';
 
+/**
+ * one_time     — a single charge (Razorpay Orders API / Cashfree Orders API)
+ * subscription — recurring charges (Razorpay Plans + Subscriptions API)
+ */
+export type PaymentType = 'one_time' | 'subscription';
+
+export type BillingPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
 export interface CustomerDetails {
   name: string;
   email: string;
@@ -26,17 +34,39 @@ export interface Price {
   amount_paise: number;
   currency: string;
   thank_you_url: string;
+
+  // Recurring configuration. Only meaningful when payment_type === 'subscription'.
+  payment_type?: PaymentType;
+  razorpay_plan_id?: string | null;
+  billing_period?: BillingPeriod | null;
+  billing_interval?: number | null;
+  total_count?: number | null;
 }
 
 export interface PaymentProviderResponse {
   gateway: PaymentGateway;
+  payment_type: PaymentType;
+
+  /**
+   * Primary gateway reference for this checkout.
+   * one_time     -> the gateway order id
+   * subscription -> the gateway subscription id
+   *
+   * Kept as `order_id` so previously-deployed checkout snippets keep working.
+   */
   order_id: string;
+
+  /** Set only for subscriptions. */
+  subscription_id?: string;
+
   checkout_data: {
-    // Gateway-specific checkout payload
-    // Razorpay: { key, order_id, name, description, prefill }
-    // Cashfree: { payment_session_id, env }
+    // Gateway-specific checkout payload handed straight to the browser SDK.
+    // Razorpay one-time:     { key, order_id, name, description, prefill }
+    // Razorpay subscription: { key, subscription_id, name, description, prefill }
+    // Cashfree:              { payment_session_id, env }
     [key: string]: any;
   };
+
   product_name: string;
   thank_you_url: string;
   prefill: CustomerDetails;
@@ -49,7 +79,10 @@ export interface PaymentProviderParams {
 }
 
 /**
- * Base interface for payment providers
+ * Base interface for payment providers.
+ *
+ * `createOrder` dispatches on price.payment_type, so a provider that supports
+ * recurring returns a subscription payload from the same entry point.
  */
 export interface PaymentProvider {
   createOrder(params: PaymentProviderParams): Promise<PaymentProviderResponse>;
@@ -66,4 +99,3 @@ export class PaymentProviderError extends Error {
     this.name = 'PaymentProviderError';
   }
 }
-
