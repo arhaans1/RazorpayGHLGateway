@@ -16,8 +16,11 @@
   If data is not found, the script will show a detailed error message with debugging info.
 -->
 <script>
-  // Immediately log that script tag was parsed
-  console.log('[Payment Gateway Checkout] Script tag parsed and executing');
+  // Immediately log that script tag was parsed.
+  // The version marker matters: this snippet is pasted into landing pages by
+  // hand and never updates itself, so this is the only way to tell from a
+  // customer's console whether a given page is running current code.
+  console.log('[Payment Gateway Checkout] v2 (method restrictions) script tag parsed and executing');
 
   // Configuration: Replace with your Vercel deployment URL
   const API_BASE_URL = 'https://razorpay-ghl-gateway.vercel.app'; // e.g., 'https://your-app.vercel.app'
@@ -110,6 +113,20 @@
       console.log('[Payment Gateway Checkout] Recurring subscription:', checkoutData.subscription_id);
     } else {
       options.order_id = checkoutData.order_id;
+    }
+
+    // Per-product payment method restrictions, built server-side so they can be
+    // changed by a redeploy without re-pasting this snippet everywhere.
+    // Razorpay honours two independent mechanisms and which one takes effect
+    // varies by flow, so the server sends both and we forward whatever arrives.
+    // The truthiness checks keep a new snippet working against an old backend
+    // and an old snippet working against a new one.
+    if (checkoutData.config) {
+      options.config = checkoutData.config;
+    }
+    if (checkoutData.method) {
+      options.method = checkoutData.method;
+      console.log('[Payment Gateway Checkout] Hiding methods:', Object.keys(checkoutData.method));
     }
 
     console.log('[Payment Gateway Checkout] Opening Razorpay checkout');

@@ -41,6 +41,13 @@ export interface Price {
   billing_period?: BillingPeriod | null;
   billing_interval?: number | null;
   total_count?: number | null;
+
+  /**
+   * Razorpay Checkout method keys to hide, e.g. ['upi', 'card'].
+   * Applies to BOTH payment types, so it sits outside the recurring block above.
+   * See lib/payment-providers/razorpay-methods.ts for the valid keys.
+   */
+  hidden_payment_methods?: string[] | null;
 }
 
 export interface PaymentProviderResponse {

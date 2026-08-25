@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
       .from('prices')
       // Kept on one line: supabase-js infers row types from this string literal,
       // and concatenation defeats that inference.
-      .select('id, product_name, amount_paise, currency, thank_you_url, payment_type, razorpay_plan_id, billing_period, billing_interval, total_count')
+      .select('id, product_name, amount_paise, currency, thank_you_url, payment_type, razorpay_plan_id, billing_period, billing_interval, total_count, hidden_payment_methods')
       .eq('id', route.price_id)
       .single();
 
