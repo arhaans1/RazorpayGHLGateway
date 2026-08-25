@@ -8,8 +8,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSupabase } from '@/lib/supabase/admin';
 import { requireAdmin } from '@/lib/admin-auth';
+import { RAZORPAY_HIDEABLE_METHODS } from '@/lib/payment-providers/razorpay-methods';
 
 const BILLING_PERIODS = ['daily', 'weekly', 'monthly', 'yearly'];
+
+/**
+ * Reject junk before it reaches the database or a live Razorpay checkout config.
+ * Throws; POST and PATCH both funnel thrown errors into a 400.
+ */
+function sanitizeHiddenMethods(value: any): string[] {
+  if (value == null) return [];
+
+  if (!Array.isArray(value)) {
+    throw new Error('hidden_payment_methods must be an array of method keys');
+  }
+
+  const cleaned = Array.from(
+    new Set(value.map((v: any) => String(v).trim().toLowerCase()).filter(Boolean))
+  );
+
+  const invalid = cleaned.filter((m) => !RAZORPAY_HIDEABLE_METHODS.includes(m));
+  if (invalid.length) {
+    throw new Error(
+      `Unknown payment method(s): ${invalid.join(', ')}. ` +
+        `Allowed: ${RAZORPAY_HIDEABLE_METHODS.join(', ')}`
+    );
+  }
+
+  return cleaned;
+}
 
 /**
  * Normalize the recurring fields so a one-time price never carries stale
@@ -17,6 +44,16 @@ const BILLING_PERIODS = ['daily', 'weekly', 'monthly', 'yearly'];
  */
 function normalize(payload: any) {
   const out = { ...payload };
+
+  // Applies to BOTH payment types, so it is handled before the one-time early
+  // return below and must not be nulled there.
+  //
+  // Only touched when the caller actually sent it. Supabase .update() leaves
+  // absent keys alone, so normalizing an absent field into [] would silently
+  // wipe an operator's saved list on any partial PATCH.
+  if ('hidden_payment_methods' in out) {
+    out.hidden_payment_methods = sanitizeHiddenMethods(out.hidden_payment_methods);
+  }
 
   if (out.payment_type !== 'subscription') {
     out.payment_type = 'one_time';

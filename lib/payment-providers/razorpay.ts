@@ -17,7 +17,9 @@ import {
   PaymentProviderParams,
   PaymentProviderError,
   Client,
+  Price,
 } from './types';
+import { RAZORPAY_HIDEABLE_METHODS } from './razorpay-methods';
 
 export const RAZORPAY_API_BASE = 'https://api.razorpay.com/v1';
 
@@ -43,6 +45,47 @@ function assertCredentials(client: Client) {
 function razorpayError(status: number, data: any, fallback: string): PaymentProviderError {
   const detail = data?.error?.description || data?.error?.reason || JSON.stringify(data);
   return new PaymentProviderError('razorpay', status || 500, data, `${fallback}: ${detail}`);
+}
+
+/**
+ * Per-product payment method restrictions for Razorpay Checkout.
+ *
+ * Razorpay honours two independent mechanisms for this and which one actually
+ * takes effect varies by flow — notably for recurring, where a card option is
+ * treated as a standing-instruction fallback. So emit both.
+ *
+ * Built here rather than in the browser snippet on purpose: the snippet is
+ * hand-pasted into GoHighLevel pages and never updates itself, so anything
+ * living there is frozen at paste time. Logic on the server can be changed with
+ * a redeploy and reaches every already-deployed page.
+ *
+ * Returns {} when nothing is hidden, which keeps checkout_data byte-identical
+ * to what existing products produce today.
+ */
+function methodRestrictions(price: Price) {
+  const hide = (price.hidden_payment_methods ?? []).filter((m) =>
+    RAZORPAY_HIDEABLE_METHODS.includes(m)
+  );
+
+  if (!hide.length) return {};
+
+  // Only the hidden keys are set to false. Some Checkout versions treat a
+  // populated `method` map as an allowlist, so naming the rest would switch
+  // them off too.
+  const method: Record<string, boolean> = {};
+  for (const key of hide) method[key] = false;
+
+  return {
+    method,
+    config: {
+      display: {
+        hide: hide.map((m) => ({ method: m })),
+        // Keeps the surviving methods in their default groupings. Without this
+        // Razorpay can read the config as a complete block definition.
+        preferences: { show_default_blocks: true },
+      },
+    },
+  };
 }
 
 export class RazorpayProvider implements PaymentProvider {
@@ -102,6 +145,7 @@ export class RazorpayProvider implements PaymentProvider {
         order_id: data.id,
         name: price.product_name,
         description: price.product_name,
+        ...methodRestrictions(price),
         prefill: {
           name: customer.name,
           email: customer.email,
@@ -176,6 +220,7 @@ export class RazorpayProvider implements PaymentProvider {
         name: price.product_name,
         description: price.product_name,
         recurring: true,
+        ...methodRestrictions(price),
         prefill: {
           name: customer.name,
           email: customer.email,

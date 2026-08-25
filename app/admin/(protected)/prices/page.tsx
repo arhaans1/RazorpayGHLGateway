@@ -10,6 +10,10 @@ import {
   EmptyState,
   TypeBadge,
 } from '../../components/ui';
+import {
+  methodsForPaymentType,
+  describeHiddenMethods,
+} from '@/lib/payment-providers/razorpay-methods';
 
 interface Client {
   id: string;
@@ -28,6 +32,7 @@ interface Price {
   billing_period: string | null;
   billing_interval: number | null;
   total_count: number | null;
+  hidden_payment_methods: string[] | null;
   created_at: string;
 }
 
@@ -42,6 +47,10 @@ const BLANK = {
   billing_period: 'monthly',
   billing_interval: '1',
   total_count: '12',
+  // The `as string[]` is load-bearing: a bare [] infers never[] under strict
+  // mode, and every setForm({ ...form, hidden_payment_methods: [...] }) would
+  // then fail to compile.
+  hidden_payment_methods: [] as string[],
 };
 
 export default function ProductsPage() {
@@ -103,8 +112,26 @@ export default function ProductsPage() {
 
   function openCreate(clientId?: string) {
     setEditing(null);
-    setForm({ ...BLANK, client_id: clientId || clients[0]?.id || '' });
+    setForm({
+      ...BLANK,
+      client_id: clientId || clients[0]?.id || '',
+      // { ...BLANK } is a shallow copy, so every form would otherwise share
+      // BLANK's one array instance. A fresh array keeps one product's
+      // selection from leaking into the next "New product" dialog.
+      hidden_payment_methods: [],
+    });
     setModalOpen(true);
+  }
+
+  function toggleHiddenMethod(method: string) {
+    // Functional form: non-mutating, and correct if two toggles land in one
+    // React batch.
+    setForm((prev) => ({
+      ...prev,
+      hidden_payment_methods: prev.hidden_payment_methods.includes(method)
+        ? prev.hidden_payment_methods.filter((m) => m !== method)
+        : [...prev.hidden_payment_methods, method],
+    }));
   }
 
   function openEdit(price: Price) {
@@ -121,6 +148,7 @@ export default function ProductsPage() {
       billing_period: price.billing_period || 'monthly',
       billing_interval: String(price.billing_interval || 1),
       total_count: price.total_count != null ? String(price.total_count) : '',
+      hidden_payment_methods: price.hidden_payment_methods ?? [],
     });
     setModalOpen(true);
   }
@@ -145,6 +173,9 @@ export default function ProductsPage() {
       currency: form.currency,
       thank_you_url: form.thank_you_url.trim(),
       payment_type: form.payment_type,
+      // Applies to both payment types, so it belongs in the base payload rather
+      // than the subscription-only block below.
+      hidden_payment_methods: form.hidden_payment_methods,
     };
 
     if (form.payment_type === 'subscription') {
@@ -300,6 +331,22 @@ export default function ProductsPage() {
                                 </td>
                                 <td>
                                   <TypeBadge paymentType={price.payment_type} />
+                                  {/* Surfaced here rather than as its own column:
+                                      the colgroup widths already sum to 100%. */}
+                                  {!!price.hidden_payment_methods?.length && (
+                                    <div
+                                      style={{
+                                        marginTop: 4,
+                                        fontSize: 12,
+                                        color: 'var(--text-faint)',
+                                      }}
+                                      title={`Hidden at checkout: ${describeHiddenMethods(
+                                        price.hidden_payment_methods
+                                      )}`}
+                                    >
+                                      Hides: {describeHiddenMethods(price.hidden_payment_methods)}
+                                    </div>
+                                  )}
                                 </td>
                                 <td>
                                   <div>{describeBilling(price)}</div>
@@ -481,6 +528,43 @@ export default function ProductsPage() {
               <option value="one_time">One-time payment</option>
               <option value="subscription">Subscription (Razorpay only)</option>
             </select>
+          </div>
+
+          <div className="field">
+            <label className="label">Hide payment methods (Razorpay only)</label>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 6,
+              }}
+            >
+              {methodsForPaymentType(form.payment_type).map((m) => (
+                <label className="checkbox-row" key={m.key}>
+                  <input
+                    type="checkbox"
+                    checked={form.hidden_payment_methods.includes(m.key)}
+                    onChange={() => toggleHiddenMethod(m.key)}
+                  />
+                  {m.label}
+                </label>
+              ))}
+            </div>
+            <span className="hint">
+              Ticked methods are hidden in the Razorpay modal. This is a display filter, not a
+              block &mdash; leave everything unticked to show all methods enabled on the
+              client&apos;s account.
+            </span>
+
+            {form.payment_type === 'subscription' &&
+              form.hidden_payment_methods.includes('card') &&
+              !form.hidden_payment_methods.includes('upi') && (
+                <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                  With cards hidden, UPI AutoPay becomes the likely route &mdash; and it caps each
+                  debit at &#8377;15,000. Above that, hide UPI too and leave eMandate, which goes up
+                  to &#8377;1 crore.
+                </div>
+              )}
           </div>
 
           {form.payment_type === 'subscription' && (

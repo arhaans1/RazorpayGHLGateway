@@ -10,8 +10,14 @@ In the Supabase SQL Editor, run these in order:
 
 1. `migrations/002_transactions_and_webhooks.sql`
 2. `migrations/003_subscriptions.sql`
+3. `migrations/004_hidden_payment_methods.sql`
 
 They're safe to re-run (`IF NOT EXISTS` throughout).
+
+⚠️ **Run these before deploying the code.** If the app queries a column that
+doesn't exist yet, Supabase errors on the price lookup and *every* checkout on
+*every* funnel returns `price_not_found` — a total payment outage, not a
+degraded feature. Migration first, verify the columns exist, then deploy.
 
 This adds:
 
@@ -153,3 +159,66 @@ for one-time payments exactly as before; subscription support is additive.
 You only need to re-copy the snippet (Admin → Checkout Code) on pages that
 should sell a **subscription** product, since those need the `subscription_id`
 branch.
+
+---
+
+## 7. Restricting payment methods per product
+
+Each product can hide specific payment methods at checkout — useful when a
+high-value subscription should go through eMandate only, and card/UPI would just
+confuse buyers or fail.
+
+### Setup
+
+1. Run `migrations/004_hidden_payment_methods.sql` in the Supabase SQL editor
+2. **Admin → Products → Edit** a product
+3. Under **Hide payment methods**, tick what to hide
+4. Save, then **re-paste the snippet** on that product's checkout page
+   (Admin → Checkout Code)
+
+The checkbox set changes with payment type. Subscriptions offer UPI AutoPay,
+Cards, eMandate and NACH; one-time products offer UPI, Cards, Netbanking,
+Wallets, Pay Later and EMI.
+
+Netbanking is deliberately absent from the subscription list: in a recurring flow
+Razorpay surfaces bank debit under its own key (`emandate`), so a netbanking tick
+there would either do nothing or — because eMandate rides netbanking rails at the
+bank — silently break the flow it was meant to protect.
+
+### The re-paste requirement
+
+Restrictions are applied in Checkout.js options, and the snippet is pasted into
+landing pages by hand. **An already-deployed page keeps whatever snippet version
+was pasted into it** and will ignore restrictions until re-pasted.
+
+To check a live page, open its console. Current snippets log:
+
+```
+[Payment Gateway Checkout] v2 (method restrictions) script tag parsed and executing
+```
+
+No `v2` means that page predates this feature.
+
+### Why not the dashboard's Payment Configuration ID
+
+Razorpay's saved configurations are applied via `checkout_config_id` on the
+**Orders** API. `POST /v1/subscriptions` does not accept that field — its
+parameters are `plan_id`, `total_count`, `quantity`, `customer_notify`,
+`start_at`, `expire_by`, `addons`, `notes`, `offer_id`. So a dashboard
+configuration cannot reach a subscription checkout at all. Driving it from
+checkout options is the only route that covers both payment types.
+
+The gateway sends **both** of Razorpay's option-level mechanisms
+(`options.method` booleans and `options.config.display.hide`) because they are
+independent and either can be ignored depending on the flow.
+
+### If the card tab survives anyway
+
+Hiding is a **display filter, not a block**. It cannot disable a method on the
+account, and anyone with devtools can strip it.
+
+Razorpay treats card standing-instructions as a recurring fallback and may keep
+showing a Cards tab regardless. If that happens, the remaining lever is outside
+this codebase: raise a Razorpay support ticket to disable Card and UPI for
+**Subscriptions** on the account. Subscription payment methods cannot be toggled
+from the dashboard — support has to do it.
