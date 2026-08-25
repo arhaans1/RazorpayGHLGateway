@@ -9,6 +9,7 @@ import {
   Spinner,
   EmptyState,
   TypeBadge,
+  GatewayBadge,
 } from '../../components/ui';
 import {
   methodsForPaymentType,
@@ -36,6 +37,16 @@ interface Price {
   created_at: string;
 }
 
+interface FunnelRoute {
+  id: number;
+  hostname: string;
+  path_prefix: string;
+  client_id: string;
+  price_id: string;
+  gateway: 'razorpay' | 'cashfree';
+  is_active: boolean;
+}
+
 const BLANK = {
   id: '',
   client_id: '',
@@ -51,11 +62,17 @@ const BLANK = {
   // mode, and every setForm({ ...form, hidden_payment_methods: [...] }) would
   // then fail to compile.
   hidden_payment_methods: [] as string[],
+  // A product's checkout URL, edited here so it goes live in one step.
+  hostname: '',
+  path_prefix: '/checkout',
+  gateway: 'razorpay',
+  route_active: true,
 };
 
 export default function ProductsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [prices, setPrices] = useState<Price[]>([]);
+  const [routes, setRoutes] = useState<FunnelRoute[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -74,12 +91,14 @@ export default function ProductsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [c, p] = await Promise.all([
+      const [c, p, r] = await Promise.all([
         adminFetch<{ clients: Client[] }>('/api/admin/clients'),
         adminFetch<{ prices: Price[] }>('/api/admin/prices'),
+        adminFetch<{ routes: FunnelRoute[] }>('/api/admin/funnel-routes'),
       ]);
       setClients(c.clients);
       setPrices(p.prices);
+      setRoutes(r.routes);
       // Open every client group by default so nothing is hidden on first load.
       setExpanded(new Set(c.clients.map((x) => x.id)));
       setError('');
@@ -101,6 +120,35 @@ export default function ProductsPage() {
     return map;
   }, [clients, prices]);
 
+  /**
+   * Routes for a product, oldest first.
+   *
+   * A product is sold on exactly one URL, but the table can hold more than one
+   * per product. We edit the oldest and surface any extras rather than
+   * pretending they aren't there.
+   */
+  const routesByPrice = useMemo(() => {
+    const map = new Map<string, FunnelRoute[]>();
+    for (const route of [...routes].sort((a, b) => a.id - b.id)) {
+      if (!map.has(route.price_id)) map.set(route.price_id, []);
+      map.get(route.price_id)!.push(route);
+    }
+    return map;
+  }, [routes]);
+
+  const primaryRouteFor = (priceId: string) => routesByPrice.get(priceId)?.[0];
+  const extraRoutesFor = (priceId: string) => (routesByPrice.get(priceId) ?? []).slice(1);
+
+  async function removeExtraRoute(routeId: number) {
+    if (!confirm('Remove this extra checkout URL?')) return;
+    try {
+      await adminFetch(`/api/admin/funnel-routes?id=${routeId}`, { method: 'DELETE' });
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
   function toggle(clientId: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -119,6 +167,10 @@ export default function ProductsPage() {
       // BLANK's one array instance. A fresh array keeps one product's
       // selection from leaking into the next "New product" dialog.
       hidden_payment_methods: [],
+      hostname: '',
+      path_prefix: '/checkout',
+      gateway: 'razorpay',
+      route_active: true,
     });
     setModalOpen(true);
   }
@@ -135,6 +187,7 @@ export default function ProductsPage() {
   }
 
   function openEdit(price: Price) {
+    const route = primaryRouteFor(price.id);
     setEditing(price);
     setForm({
       id: price.id,
@@ -149,6 +202,10 @@ export default function ProductsPage() {
       billing_interval: String(price.billing_interval || 1),
       total_count: price.total_count != null ? String(price.total_count) : '',
       hidden_payment_methods: price.hidden_payment_methods ?? [],
+      hostname: route?.hostname ?? '',
+      path_prefix: route?.path_prefix ?? '/checkout',
+      gateway: route?.gateway ?? 'razorpay',
+      route_active: route ? route.is_active : true,
     });
     setModalOpen(true);
   }
@@ -176,6 +233,14 @@ export default function ProductsPage() {
       // Applies to both payment types, so it belongs in the base payload rather
       // than the subscription-only block below.
       hidden_payment_methods: form.hidden_payment_methods,
+      // Saved in the same request as the product, so a new product cannot end
+      // up existing but unreachable.
+      route: {
+        hostname: form.hostname.trim(),
+        path_prefix: form.path_prefix.trim(),
+        gateway: form.gateway,
+        is_active: form.route_active,
+      },
     };
 
     if (form.payment_type === 'subscription') {
@@ -313,7 +378,7 @@ export default function ProductsPage() {
                               <th>Price</th>
                               <th>Type</th>
                               <th>Billing</th>
-                              <th>Thank-you URL</th>
+                              <th>Checkout URL</th>
                               <th style={{ textAlign: 'right' }}>Actions</th>
                             </tr>
                           </thead>
@@ -374,16 +439,47 @@ export default function ProductsPage() {
                                   )}
                                 </td>
                                 <td>
-                                  <a
-                                    href={price.thank_you_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="truncate"
-                                    style={{ color: 'var(--blue)' }}
-                                    title={price.thank_you_url}
-                                  >
-                                    {price.thank_you_url}
-                                  </a>
+                                  {(() => {
+                                    const route = primaryRouteFor(price.id);
+                                    const extras = extraRoutesFor(price.id).length;
+
+                                    // No route means the product exists but no
+                                    // page can sell it — the failure this page
+                                    // used to hide.
+                                    if (!route) {
+                                      return <span className="badge badge-amber">Not live</span>;
+                                    }
+
+                                    return (
+                                      <>
+                                        <a
+                                          href={`https://${route.hostname}${route.path_prefix}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="truncate mono"
+                                          style={{ color: 'var(--blue)' }}
+                                          title={`${route.hostname}${route.path_prefix}`}
+                                        >
+                                          {route.hostname}
+                                          {route.path_prefix}
+                                        </a>
+                                        <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                                          <GatewayBadge gateway={route.gateway} />
+                                          {!route.is_active && (
+                                            <span className="badge badge-gray">Paused</span>
+                                          )}
+                                          {extras > 0 && (
+                                            <span
+                                              className="badge badge-amber"
+                                              title="Extra URLs also point at this product"
+                                            >
+                                              +{extras} more
+                                            </span>
+                                          )}
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
                                 </td>
                                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                                   <button
@@ -503,6 +599,79 @@ export default function ProductsPage() {
                 <option value="EUR">EUR</option>
               </select>
             </div>
+          </div>
+
+          <div className="field">
+            <label className="label">Checkout URL</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="input input-mono"
+                style={{ flex: 2 }}
+                value={form.hostname}
+                onChange={(e) => setForm({ ...form, hostname: e.target.value })}
+                placeholder="lp.example.com"
+              />
+              <input
+                className="input input-mono"
+                style={{ flex: 1 }}
+                value={form.path_prefix}
+                onChange={(e) => setForm({ ...form, path_prefix: e.target.value })}
+                placeholder="/checkout"
+              />
+            </div>
+            <span className="hint">
+              The page carrying the checkout snippet. Leave blank to take this product offline.
+            </span>
+
+            <div className="row" style={{ marginTop: 4 }}>
+              <select
+                className="select"
+                style={{ width: 'auto', minWidth: 150 }}
+                value={form.gateway}
+                onChange={(e) => setForm({ ...form, gateway: e.target.value })}
+              >
+                <option value="razorpay">Razorpay</option>
+                <option value="cashfree">Cashfree</option>
+              </select>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={form.route_active}
+                  onChange={(e) => setForm({ ...form, route_active: e.target.checked })}
+                />
+                Live
+              </label>
+            </div>
+
+            {form.payment_type === 'subscription' && form.gateway === 'cashfree' && (
+              <div className="alert alert-error" style={{ marginBottom: 0 }}>
+                Cashfree cannot process subscriptions here. Switch the gateway to Razorpay, or this
+                product will fail at checkout.
+              </div>
+            )}
+
+            {editing && extraRoutesFor(editing.id).length > 0 && (
+              <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                This product also has {extraRoutesFor(editing.id).length} other checkout URL
+                {extraRoutesFor(editing.id).length === 1 ? '' : 's'}. Only the one above is edited
+                here.
+                {extraRoutesFor(editing.id).map((r) => (
+                  <div className="row" key={r.id} style={{ marginTop: 6 }}>
+                    <code className="mono">
+                      {r.hostname}
+                      {r.path_prefix}
+                    </code>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      onClick={() => removeExtraRoute(r.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="field">

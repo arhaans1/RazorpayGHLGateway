@@ -5,32 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSupabase } from '@/lib/supabase/admin';
 import { requireAdmin } from '@/lib/admin-auth';
-
-/**
- * Normalize hostname/path the same way /api/create-order does at lookup time,
- * otherwise a route saved as "https://site.com/" or "checkout" silently never
- * matches an incoming request.
- */
-function normalizeRoute(payload: any) {
-  const out = { ...payload };
-
-  if (typeof out.hostname === 'string') {
-    out.hostname = out.hostname
-      .trim()
-      .replace(/^https?:\/\//i, '')
-      .replace(/\/.*$/, '')
-      .toLowerCase();
-  }
-
-  if (typeof out.path_prefix === 'string') {
-    let path = out.path_prefix.trim();
-    if (!path.startsWith('/')) path = '/' + path;
-    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
-    out.path_prefix = path;
-  }
-
-  return out;
-}
+// Shared with the Products page, which now edits each product's checkout URL.
+import { normalizeRoute } from '@/lib/funnel-routes';
 
 export async function GET() {
   const denied = await requireAdmin();
