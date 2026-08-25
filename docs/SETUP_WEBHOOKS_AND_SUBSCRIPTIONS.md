@@ -85,7 +85,23 @@ Step 5 creates the plan inside that client's Razorpay account and stores the
 plan id. A subscription cannot be created without it — checkout will return a
 clear error telling you to do this.
 
-6. Point a funnel route at the product with gateway **Razorpay**
+6. Set the **Checkout URL** and gateway in the same modal, with gateway
+   **Razorpay** — subscriptions cannot run on Cashfree
+
+### Checkout URLs live on the product
+
+There is no separate Routes tab. Each product carries its own checkout URL,
+gateway and live toggle, saved in the same request as the product — so a new
+product cannot end up existing but unreachable.
+
+A product with no URL shows a **Not live** badge in the products table. That
+used to be a silent failure: the product existed, no page could sell it, and you
+only found out when a customer hit a dead checkout.
+
+The `funnel_routes` table is unchanged — it is still what every checkout queries
+to resolve a URL to a client and product. Only the editing UI moved. The table
+can technically hold several URLs per product; if one ever does, the product
+modal lists the extras with a Remove button rather than hiding them.
 
 ### Before it will work
 

@@ -7,7 +7,6 @@ const LINKS = [
   { href: '/admin', label: 'Dashboard', exact: true },
   { href: '/admin/clients', label: 'Clients' },
   { href: '/admin/prices', label: 'Products' },
-  { href: '/admin/funnel-routes', label: 'Routes' },
   { href: '/admin/transactions', label: 'Transactions' },
   { href: '/admin/checkout-code', label: 'Checkout Code' },
   { href: '/admin/form-redirect-urls', label: 'Redirect URLs' },
