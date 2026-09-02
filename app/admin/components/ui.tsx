@@ -4,13 +4,28 @@ import { ReactNode, useEffect } from 'react';
 
 /* -------------------------------------------------------------- formatting */
 
-const CURRENCY_SYMBOLS: Record<string, string> = { INR: '₹', USD: '$', EUR: '€' };
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  INR: '₹',
+  USD: '$',
+  EUR: '€',
+  // Latin "AED" rather than د.إ — clearer than Arabic script in an admin table.
+  AED: 'AED ',
+};
 
-/** Amounts are stored in the smallest unit (paise/cents). */
+/**
+ * Amounts are stored in the smallest unit. That is paise for INR and fils for
+ * AED, but every currency we support divides by 100 the same way.
+ */
 export function formatAmount(minorUnits: number, currency = 'INR'): string {
-  const symbol = CURRENCY_SYMBOLS[currency?.toUpperCase()] ?? `${currency} `;
+  const code = currency?.toUpperCase();
+  const symbol = CURRENCY_SYMBOLS[code] ?? `${currency} `;
   const major = (minorUnits ?? 0) / 100;
-  return `${symbol}${major.toLocaleString('en-IN', {
+
+  // Indian digit grouping (1,00,000) is correct for INR and wrong for anything
+  // else, where 100,000 is expected.
+  const locale = code === 'INR' ? 'en-IN' : 'en-US';
+
+  return `${symbol}${major.toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
