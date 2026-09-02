@@ -597,6 +597,7 @@ export default function ProductsPage() {
                 <option value="INR">INR</option>
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
+                <option value="AED">AED</option>
               </select>
             </div>
           </div>
@@ -725,7 +726,27 @@ export default function ProductsPage() {
               client&apos;s account.
             </span>
 
-            {form.payment_type === 'subscription' &&
+            {/* Non-INR runs on cards only: UPI and eMandate are INR-only, so
+                hiding cards there leaves no payable method at all. */}
+            {form.currency !== 'INR' && form.hidden_payment_methods.includes('card') && (
+              <div className="alert alert-error" style={{ marginBottom: 0 }}>
+                {form.currency} payments run on cards only &mdash; UPI and eMandate are INR-only.
+                With cards hidden this checkout has nothing left to pay with.
+              </div>
+            )}
+
+            {form.currency !== 'INR' &&
+              form.payment_type === 'subscription' &&
+              !form.hidden_payment_methods.includes('card') && (
+                <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                  A {form.currency} subscription authorises by card only, and needs international
+                  payments enabled on the client&apos;s Razorpay account. Settlement is still in
+                  INR.
+                </div>
+              )}
+
+            {form.currency === 'INR' &&
+              form.payment_type === 'subscription' &&
               form.hidden_payment_methods.includes('card') &&
               !form.hidden_payment_methods.includes('upi') && (
                 <div className="alert alert-info" style={{ marginBottom: 0 }}>
