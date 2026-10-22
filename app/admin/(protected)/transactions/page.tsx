@@ -1,7 +1,8 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { DayRange, rangeFromParams, rangeQuery } from '@/lib/date-range';
 import {
   adminFetch,
   formatAmount,
@@ -11,6 +12,10 @@ import {
   StatusBadge,
   GatewayBadge,
   TypeBadge,
+  DateRangePicker,
+  describeRange,
+  formatRevenue,
+  RevenueStat,
 } from '../../components/ui';
 
 interface Transaction {
@@ -37,6 +42,14 @@ interface Client {
   name: string;
 }
 
+interface Summary {
+  count: number;
+  paid: number;
+  failed: number;
+  revenue: Record<string, number>;
+  truncated: boolean;
+}
+
 const PAGE_SIZE = 50;
 
 /**
@@ -52,7 +65,12 @@ export default function TransactionsPage() {
 }
 
 function TransactionsView() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+
+  // Carried over from the dashboard's "Details"/"View transactions" links.
+  const [range, setRangeState] = useState<DayRange>(() => rangeFromParams(searchParams));
+  const [summary, setSummary] = useState<Summary | null>(null);
 
   const [clients, setClients] = useState<Client[]>([]);
   const [rows, setRows] = useState<Transaction[]>([]);
@@ -85,23 +103,41 @@ function TransactionsView() {
       for (const [key, value] of Object.entries(filters)) {
         if (value) params.set(key, value);
       }
+      if (range.from) params.set('from', range.from);
+      if (range.to) params.set('to', range.to);
 
-      const data = await adminFetch<{ transactions: Transaction[]; total: number }>(
-        `/api/admin/transactions?${params}`
-      );
+      const data = await adminFetch<{
+        transactions: Transaction[];
+        total: number;
+        summary: Summary;
+      }>(`/api/admin/transactions?${params}`);
       setRows(data.transactions);
       setTotal(data.total);
+      setSummary(data.summary);
       setError('');
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [filters, offset]);
+  }, [filters, offset, range.from, range.to]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Keep the URL in step so a refresh or shared link reopens the same view.
+  useEffect(() => {
+    const parts = [rangeQuery(range)];
+    if (filters.client_id) parts.unshift(`client_id=${encodeURIComponent(filters.client_id)}`);
+    router.replace(`/admin/transactions?${parts.join('&')}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, filters.client_id]);
+
+  function setRange(next: DayRange) {
+    setOffset(0);
+    setRangeState(next);
+  }
 
   /** Changing any filter must reset paging, or page 3 of the old result set leaks through. */
   function setFilter(key: string, value: string) {
@@ -119,12 +155,52 @@ function TransactionsView() {
         <div>
           <h1 className="page-title">Transactions</h1>
           <p className="page-subtitle">
-            Every checkout attempt. Status is confirmed server-side by gateway webhooks.
+            Every checkout attempt &middot; {describeRange(range)}. Status is confirmed by gateway
+            webhooks.
           </p>
         </div>
       </div>
 
+      <DateRangePicker value={range} onChange={setRange} />
+
       {error && <div className="alert alert-error">{error}</div>}
+
+      {summary && (
+        <div className="stat-grid">
+          <div className="stat">
+            <div className="stat-label">Revenue</div>
+            <RevenueStat revenue={summary.revenue} />
+            <div className="stat-meta">from paid transactions shown below</div>
+          </div>
+          <div className="stat">
+            <div className="stat-label">Transactions</div>
+            <div className="stat-value">{summary.count}</div>
+            <div className="stat-meta">matching these filters</div>
+          </div>
+          <div className="stat">
+            <div className="stat-label">Paid</div>
+            <div className="stat-value">{summary.paid}</div>
+            <div className="stat-meta">
+              {summary.paid + summary.failed > 0
+                ? `${Math.round((summary.paid / (summary.paid + summary.failed)) * 100)}% success`
+                : 'no completed attempts'}
+            </div>
+          </div>
+          <div className="stat">
+            <div className="stat-label">Failed</div>
+            <div className="stat-value">{summary.failed}</div>
+            <div className="stat-meta">
+              {summary.count - summary.paid - summary.failed} still pending
+            </div>
+          </div>
+        </div>
+      )}
+      {summary?.truncated && (
+        <div className="alert alert-info">
+          Totals cover the most recent 5,000 matching transactions. Narrow the range for exact
+          figures.
+        </div>
+      )}
 
       <div className="filter-bar">
         <select

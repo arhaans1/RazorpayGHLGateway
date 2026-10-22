@@ -1,14 +1,27 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { adminFetch, formatAmount, Spinner, EmptyState, TypeBadge } from '../components/ui';
+import { useRouter, useSearchParams } from 'next/navigation';
+import {
+  adminFetch,
+  formatAmount,
+  formatRevenue,
+  RevenueStat,
+  revenueSortKey,
+  Spinner,
+  EmptyState,
+  TypeBadge,
+  DateRangePicker,
+  describeRange,
+} from '../components/ui';
+import { DayRange, rangeFromParams, rangeQuery } from '@/lib/date-range';
 
 interface Bucket {
   count: number;
   paid: number;
   failed: number;
-  revenue_paise: number;
+  revenue: Record<string, number>;
 }
 
 interface Overview {
@@ -21,7 +34,6 @@ interface Overview {
     active_subscriptions: number;
     truncated: boolean;
   };
-  last_30_days: Bucket;
   by_client: (Bucket & { client_id: string; name: string })[];
   by_price: (Bucket & {
     price_id: string;
@@ -29,6 +41,7 @@ interface Overview {
     product_name: string;
     payment_type: string;
     amount_paise: number;
+    currency: string;
   })[];
 }
 
@@ -39,64 +52,112 @@ function successRate(bucket: Bucket): string {
 }
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <Dashboard />
+    </Suspense>
+  );
+}
+
+function Dashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [range, setRange] = useState<DayRange>(() => rangeFromParams(searchParams));
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    adminFetch<Overview>('/api/admin/overview')
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    const q = rangeQuery(range);
+    router.replace(`/admin?${q}`, { scroll: false });
 
-  if (loading) return <Spinner />;
+    adminFetch<Overview>(`/api/admin/overview?${q}`)
+      .then((d) => {
+        if (!cancelled) {
+          setData(d);
+          setError('');
+        }
+      })
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false));
 
-  if (error) {
-    return (
-      <div className="alert alert-error">
-        {error}
-        <div style={{ marginTop: 6, fontSize: 12.5 }}>
-          If this mentions a missing table, run the SQL in <code>migrations/</code> in your
-          Supabase SQL editor.
-        </div>
-      </div>
-    );
-  }
+    // A fast second click can land before the first response; drop the stale one.
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to]);
 
-  if (!data) return null;
-
-  const { totals, last_30_days: recent, by_client, by_price } = data;
-
-  const clientsWithActivity = [...by_client].sort((a, b) => b.revenue_paise - a.revenue_paise);
-  const topProducts = [...by_price].sort((a, b) => b.revenue_paise - a.revenue_paise).slice(0, 8);
-  const clientNameOf = (id: string) => by_client.find((c) => c.client_id === id)?.name ?? id;
+  const q = rangeQuery(range);
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">Payments across all clients and products.</p>
+          <p className="page-subtitle">
+            Payments across all clients and products &middot; {describeRange(range)}
+          </p>
         </div>
       </div>
 
+      <DateRangePicker value={range} onChange={setRange} />
+
+      {error && (
+        <div className="alert alert-error">
+          {error}
+          <div style={{ marginTop: 6, fontSize: 12.5 }}>
+            If this mentions a missing table, run the SQL in <code>migrations/</code> in your
+            Supabase SQL editor.
+          </div>
+        </div>
+      )}
+
+      {loading && !data ? (
+        <Spinner />
+      ) : data ? (
+        <div style={{ opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s' }}>
+          <DashboardBody data={data} q={q} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DashboardBody({ data, q }: { data: Overview; q: string }) {
+  const { totals, by_client, by_price } = data;
+
+  const clientsByRevenue = [...by_client].sort(
+    (a, b) => revenueSortKey(b.revenue) - revenueSortKey(a.revenue) || b.count - a.count
+  );
+  const topProducts = [...by_price]
+    .filter((p) => p.count > 0)
+    .sort((a, b) => revenueSortKey(b.revenue) - revenueSortKey(a.revenue) || b.paid - a.paid)
+    .slice(0, 8);
+  const clientNameOf = (id: string) => by_client.find((c) => c.client_id === id)?.name ?? id;
+
+  return (
+    <>
       {totals.truncated && (
         <div className="alert alert-info">
-          Showing aggregates over the most recent 5,000 transactions.
+          This period has more than 5,000 transactions; totals cover the most recent 5,000.
+          Narrow the range for exact figures.
         </div>
       )}
 
       <div className="stat-grid">
         <div className="stat">
-          <div className="stat-label">Revenue collected</div>
-          <div className="stat-value blue">{formatAmount(totals.revenue_paise)}</div>
+          <div className="stat-label">Revenue</div>
+          <RevenueStat revenue={totals.revenue} />
           <div className="stat-meta">{totals.paid} successful payments</div>
         </div>
         <div className="stat">
-          <div className="stat-label">Last 30 days</div>
-          <div className="stat-value">{formatAmount(recent.revenue_paise)}</div>
-          <div className="stat-meta">{recent.paid} payments</div>
+          <div className="stat-label">Checkouts</div>
+          <div className="stat-value">{totals.count}</div>
+          <div className="stat-meta">started in this period</div>
         </div>
         <div className="stat">
           <div className="stat-label">Success rate</div>
@@ -106,7 +167,7 @@ export default function DashboardPage() {
         <div className="stat">
           <div className="stat-label">Active subscriptions</div>
           <div className="stat-value">{totals.active_subscriptions}</div>
-          <div className="stat-meta">{totals.subscriptions} total</div>
+          <div className="stat-meta">right now &middot; {totals.subscriptions} total</div>
         </div>
         <div className="stat">
           <div className="stat-label">Clients</div>
@@ -114,7 +175,7 @@ export default function DashboardPage() {
           <div className="stat-meta">{totals.products} products</div>
         </div>
         <div className="stat">
-          <div className="stat-label">Active routes</div>
+          <div className="stat-label">Live checkouts</div>
           <div className="stat-value">{totals.active_routes}</div>
           <div className="stat-meta">of {totals.routes} configured</div>
         </div>
@@ -124,12 +185,12 @@ export default function DashboardPage() {
         <div className="card">
           <div className="card-head">
             <div className="card-title">Revenue by client</div>
-            <Link href="/admin/transactions" className="btn btn-ghost btn-sm">
-              View transactions →
+            <Link href={`/admin/transactions?${q}`} className="btn btn-ghost btn-sm">
+              View transactions &rarr;
             </Link>
           </div>
 
-          {clientsWithActivity.length === 0 ? (
+          {clientsByRevenue.length === 0 ? (
             <EmptyState title="No clients yet" hint="Add a client to get started." />
           ) : (
             <div className="table-wrap">
@@ -145,16 +206,18 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {clientsWithActivity.map((c) => (
+                  {clientsByRevenue.map((c) => (
                     <tr key={c.client_id}>
                       <td style={{ fontWeight: 550 }}>{c.name}</td>
-                      <td className="num">{formatAmount(c.revenue_paise)}</td>
+                      <td className="num">{formatRevenue(c.revenue)}</td>
                       <td className="num">{c.paid}</td>
                       <td className="num">{c.failed}</td>
                       <td className="num">{successRate(c)}</td>
                       <td style={{ textAlign: 'right' }}>
                         <Link
-                          href={`/admin/transactions?client_id=${encodeURIComponent(c.client_id)}`}
+                          href={`/admin/transactions?client_id=${encodeURIComponent(
+                            c.client_id
+                          )}&${q}`}
                           className="btn btn-ghost btn-sm"
                         >
                           Details
@@ -174,7 +237,10 @@ export default function DashboardPage() {
           </div>
 
           {topProducts.length === 0 ? (
-            <EmptyState title="No products yet" hint="Add a product under Products." />
+            <EmptyState
+              title="No sales in this period"
+              hint="Try a wider date range, or All time."
+            />
           ) : (
             <div className="table-wrap">
               <table className="data">
@@ -196,8 +262,8 @@ export default function DashboardPage() {
                       <td>
                         <TypeBadge paymentType={p.payment_type} />
                       </td>
-                      <td className="num">{formatAmount(p.amount_paise)}</td>
-                      <td className="num">{formatAmount(p.revenue_paise)}</td>
+                      <td className="num">{formatAmount(p.amount_paise, p.currency)}</td>
+                      <td className="num">{formatRevenue(p.revenue)}</td>
                       <td className="num">{p.paid}</td>
                     </tr>
                   ))}

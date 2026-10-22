@@ -1,6 +1,13 @@
 'use client';
 
 import { ReactNode, useEffect } from 'react';
+import {
+  DayRange,
+  PRESETS,
+  presetRange,
+  matchPreset,
+  todayIST,
+} from '@/lib/date-range';
 
 /* -------------------------------------------------------------- formatting */
 
@@ -41,6 +48,9 @@ export function formatDate(value?: string | null): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    // Same zone the date-range filter uses, so a row that matches "22 Oct"
+    // never displays as 21 Oct on a laptop set to another timezone.
+    timeZone: 'Asia/Kolkata',
   });
 }
 
@@ -181,4 +191,129 @@ export async function adminFetch<T = any>(
   }
 
   return data as T;
+}
+
+/* ------------------------------------------------------- multi-currency */
+
+/**
+ * Revenue is totalled per currency (INR paise and AED fils can't be added),
+ * so render each currency separately, INR first. Empty means nothing paid.
+ */
+export function formatRevenue(revenue?: Record<string, number> | null): string {
+  const entries = Object.entries(revenue ?? {}).filter(([, v]) => v > 0);
+  if (!entries.length) return formatAmount(0, 'INR');
+  entries.sort(([a], [b]) => (a === 'INR' ? -1 : b === 'INR' ? 1 : a.localeCompare(b)));
+  return entries.map(([cur, v]) => formatAmount(v, cur)).join(' + ');
+}
+
+/** Sort key for revenue: INR value, then everything else as a tiebreaker. */
+export function revenueSortKey(revenue?: Record<string, number> | null): number {
+  const r = revenue ?? {};
+  const inr = r.INR ?? 0;
+  const other = Object.entries(r).reduce((s, [k, v]) => (k === 'INR' ? s : s + v), 0);
+  return inr * 1e6 + other;
+}
+
+/* ------------------------------------------------------- date range */
+
+export function DateRangePicker({
+  value,
+  onChange,
+}: {
+  value: DayRange;
+  onChange: (next: DayRange) => void;
+}) {
+  const active = matchPreset(value);
+  const today = todayIST();
+
+  function setDay(which: 'from' | 'to', day: string) {
+    const next = { ...value, [which]: day };
+    // Picking a start after the end (or vice versa) almost always means "I
+    // moved on to a different period", so drag the other end along rather
+    // than showing an empty, inverted range.
+    if (next.from && next.to && next.from > next.to) {
+      if (which === 'from') next.to = next.from;
+      else next.from = next.to;
+    }
+    onChange(next);
+  }
+
+  return (
+    <div className="range-picker">
+      <div className="range-presets">
+        {PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            className={`range-chip ${active === p.key ? 'active' : ''}`}
+            onClick={() => onChange(presetRange(p.key))}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="range-inputs">
+        <label className="range-field">
+          <span>From</span>
+          <input
+            type="date"
+            className="input"
+            value={value.from}
+            max={value.to || today}
+            onChange={(e) => setDay('from', e.target.value)}
+          />
+        </label>
+        <span className="range-dash">&ndash;</span>
+        <label className="range-field">
+          <span>To</span>
+          <input
+            type="date"
+            className="input"
+            value={value.to}
+            min={value.from || undefined}
+            max={today}
+            onChange={(e) => setDay('to', e.target.value)}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/** Human description of a range, e.g. "1 Oct – 22 Oct 2026" or "All time". */
+export function describeRange(range: DayRange): string {
+  const fmt = (d: string) =>
+    new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  if (!range.from && !range.to) return 'All time';
+  if (range.from && range.to && range.from === range.to) return fmt(range.from);
+  if (range.from && range.to) return `${fmt(range.from)} – ${fmt(range.to)}`;
+  if (range.from) return `Since ${fmt(range.from)}`;
+  return `Up to ${fmt(range.to)}`;
+}
+
+/**
+ * Headline revenue for a stat tile: the main currency large, any others on a
+ * smaller line below. Joining them with "+" at headline size wraps into an
+ * unreadable block once a second currency appears.
+ */
+export function RevenueStat({ revenue }: { revenue?: Record<string, number> | null }) {
+  const entries = Object.entries(revenue ?? {}).filter(([, v]) => v > 0);
+  entries.sort(([a], [b]) => (a === 'INR' ? -1 : b === 'INR' ? 1 : a.localeCompare(b)));
+  const [first, ...rest] = entries.length ? entries : [['INR', 0] as [string, number]];
+
+  return (
+    <>
+      <div className="stat-value blue">{formatAmount(first[1], first[0])}</div>
+      {rest.map(([cur, v]) => (
+        <div key={cur} className="stat-secondary">
+          + {formatAmount(v, cur)}
+        </div>
+      ))}
+    </>
+  );
 }
