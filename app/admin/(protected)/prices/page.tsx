@@ -584,7 +584,11 @@ export default function ProductsPage() {
                 placeholder="1499"
                 required
               />
-              <span className="hint">In rupees, not paise.</span>
+              <span className="hint">
+                {/* Entered in whole units; stored as minor units (x100) for every
+                    currency we support. */}
+                {({ INR: 'In rupees, not paise.', USD: 'In dollars, not cents.', EUR: 'In euros, not cents.', AED: 'In dirhams, not fils.' } as Record<string, string>)[form.currency] ?? 'In whole units.'}
+              </span>
             </div>
 
             <div className="field">
